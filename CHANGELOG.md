@@ -2,6 +2,12 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.2.1
+
+### Fixed
+- Model registry refresh no longer leaks performance marks when `ctx.modelRegistry.refresh()` throws.
+- `debugMeasure` end-function now gracefully handles missing performance marks instead of propagating a `SyntaxError`, preventing the error from surfacing to users during subagent spawning.
+
 ## 4.2.0
 
 ### Added

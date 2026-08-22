@@ -148,7 +148,7 @@ export function debugMeasure(module: string, event: string) {
   return (meta?: Record<string, unknown>) => {
     try {
       performance.mark(`${name}:end`);
-      performance.measure(name, `${name}:start`, `${name}:end`);
+      try { performance.measure(name, `${name}:start`, `${name}:end`); } catch { /* mark missing — nothing to measure */ }
       const entry = performance.getEntriesByName(name, "measure")[0];
       if (entry) {
         const data: Record<string, unknown> = {

@@ -501,10 +501,11 @@ export default function bifrostExtension(pi: ExtensionAPI) {
           state.lastRegistryRefreshAt = Date.now();
           state.forceRegistryRefresh = false;
           invalidatePipeline();
-          endRefresh();
         } catch (err) {
           debug("input", "registry.refresh.error", { error: String(err) });
           log(ctx, `model registry refresh failed: ${String(err).slice(0, 200)}`, "warning");
+        } finally {
+          endRefresh();
         }
       }
 
