@@ -29,6 +29,7 @@ import {
   diagnoseCandidates,
   findCandidates,
   getStrategy,
+  guessTier,
   modelKey,
   resolveModelWithFallback,
 } from "./routing.js";
@@ -542,10 +543,23 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const source = classification.kind === "classified"
         ? classification.source
         : "fallback";
-      const pattern = state.config.models?.[tier] ?? tier;
+      const inferPattern = (t: string): string | string[] => {
+        const raw = state.config.models?.[t];
+        if (!raw || (Array.isArray(raw) && raw.length === 0)) {
+          // Tier unconfigured — auto-derive from live registry via guessTier.
+          // "writing" has no guessTier class; alias to "general" for candidate lookup.
+          const inferredTier = t === "writing" ? "general" : t;
+          const auto = [...ctx.modelRegistry.getAvailable()]
+            .filter(m => guessTier(m) === inferredTier)
+            .map(modelKey);
+          return auto.length > 0 ? auto : t;
+        }
+        return raw;
+      };
+      const pattern = inferPattern(tier);
       const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
       const defaultTier = state.config.default;
-      const defaultPattern = defaultTier ? (state.config.models?.[defaultTier] ?? defaultTier) : undefined;
+      const defaultPattern = defaultTier ? inferPattern(defaultTier) : undefined;
       const defaultStrategy = defaultTier
         ? getStrategy(state.config.categoryStrategies, state.config.strategy, defaultTier)
         : strategy;

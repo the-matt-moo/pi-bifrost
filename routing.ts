@@ -537,7 +537,7 @@ const SUBSCRIPTION_FRONTIER_CONTEXT = 200_000;
 const SUBSCRIPTION_GENERAL_CONTEXT = 64_000;
 const FREE_GENERAL_CONTEXT = 200_000;
 
-export type BifrostTier = "frontier" | "general" | "quick";
+export type BifrostTier = "frontier" | "general" | "writing" | "quick";
 
 /** Assign a model to a tier based on billing class, cost, and context window. */
 export function guessTier(
