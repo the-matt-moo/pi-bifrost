@@ -115,12 +115,12 @@ export const DEFAULT_RULES: RouteRule[] = [
   {
     pattern:
       "\\b(explain this|explain how|explain why|what does this|how does this|walk me through|describe this)\\b",
-    model: "general",
+    model: "writing",
   },
   {
     pattern:
-      "\\b(write docs?|write documentation|add comments|document this|jsdoc|docstring|readme)\\b",
-    model: "general",
+      "\\b(write docs?|write documentation|add comments|document this|jsdoc|docstring|readme|write a guide|write a tutorial|write a summary|summarize this|write a report|write an email|write a proposal|write a description|write a message)\\b",
+    model: "writing",
   },
   {
     pattern:
@@ -380,6 +380,7 @@ export function loadConfig(
     categoryStrategies: {
       quick: "first",
       general: "first",
+      writing: "first",
       frontier: "first",
     },
     models: {},

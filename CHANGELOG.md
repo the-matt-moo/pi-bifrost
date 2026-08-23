@@ -2,6 +2,16 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.2.2
+
+### Added
+- `writing` tier: explanation and documentation tasks now route to a dedicated tier instead of `general`. Default rules send `explain this`, `write docs`, `summarize this`, and similar writing-heavy prompts to `writing`.
+- `writing` added to `BifrostTier` type, `loadConfig` base `categoryStrategies`, and the shipped `bifrost.json` (strategy: `subscription_balance`).
+- `writing` tier color: blue in the routing statusline.
+
+### Fixed
+- Tiers with empty model lists (`[]`) no longer throw `requested_tier_unavailable`. Bifrost now auto-derives candidates from the live registry via `guessTier` when a tier has no explicitly configured models. `writing` aliases to `general` for this lookup since `guessTier` has no writing class. Explicit `/bifrost discover` still recommended for stable, reproducible routing.
+
 ## 4.2.1
 
 ### Fixed

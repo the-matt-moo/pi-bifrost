@@ -66,7 +66,7 @@ Bifrost: <tier> → <model> (<source>; N skipped)
 ```
 
 - `Bifrost` renders in a rainbow gradient.
-- `<tier>` is colored by tier: quick (green), general (cyan), frontier (orange).
+- `<tier>` is colored by tier: quick (green), general (cyan), writing (blue), frontier (orange).
 - `→` is white.
 - `<model>` (provider/name, e.g. `openrouter/tencent/hy3`) is violet.
 - the trailing `(source; N skipped)` note is grey.
@@ -145,6 +145,8 @@ Run once after install:
 
 This probes every model you have access to, finds which ones respond, and writes a config. Bifrost routes prompts from that point forward. If a selected model ends with a provider error, Bifrost opens its circuit immediately so the next prompt uses the next healthy model in that category. It never automatically replays a failed prompt.
 
+If `/bifrost init` has not been run, Bifrost auto-derives tier candidates at runtime from the live registry using `guessTier`. This works but skips probe-based ordering and quota preferences. Run `/bifrost init` for stable, reproducible routing.
+
 Narrow discovery scope when needed:
 
 ```text
@@ -188,6 +190,7 @@ When you run `/bifrost init`, models are probed, fetched, and categorized automa
   - Cost < $1/1M tokens → `quick`
   - Everything else → `general`
   - *Subscription models* (Anthropic, Codex, Antigravity) use context-window heuristics instead of cost: ≥200k tokens = `frontier`, ≥64k = `general`, otherwise `quick`.
+  - `writing` is a routing-only tier (explain/docs/summarize tasks). It has no `guessTier` cost class; when unconfigured it uses `general`-tier candidates at runtime.
 - **Intra-Tier Ordering (`sortTierModels`)**: Non-free models are sorted ascending by their **probe latency** (fastest first). Free models are sorted by their **OpenRouter collection rank**.
 
 ### 2. Runtime Model Selection Strategies
