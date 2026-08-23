@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.2.3
+
+### Fixed
+- Candidate resolution now scopes to Pi's enabled-model selection (`scopedModels`) instead of the full registry. Classifier model lookup and tier inference both filter through a new `scopedCandidates` helper, preventing Bifrost from selecting models the user has not enabled in Pi.
+
 ## 4.2.2
 
 ### Added

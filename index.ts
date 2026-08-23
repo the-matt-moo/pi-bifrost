@@ -57,13 +57,21 @@ import {
 
 // ── Pipeline builder (composition root) ────────────────────────
 
+function scopedCandidates(
+  ctx: ExtensionContext,
+  pattern: string | string[] | undefined,
+) {
+  const scoped = new Set(ctx.scopedModels.map(({ model }) => modelKey(model)));
+  return findCandidates(ctx, pattern).filter((model) => scoped.has(modelKey(model)));
+}
+
 function resolveClassifierModels(
   ctx: ExtensionContext,
   config: BifrostConfig,
 ): ClassifierModel[] {
   const pattern = config.classifier?.model;
   if (!pattern) return [];
-  return findCandidates(ctx, pattern)
+  return scopedCandidates(ctx, pattern)
     .slice(0, 3)
     .map((model) => ({ kind: "registry" as const, model }));
 }
@@ -543,18 +551,18 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const source = classification.kind === "classified"
         ? classification.source
         : "fallback";
-      const inferPattern = (t: string): string | string[] => {
+      const inferPattern = (t: string): string[] => {
         const raw = state.config.models?.[t];
-        if (!raw || (Array.isArray(raw) && raw.length === 0)) {
-          // Tier unconfigured — auto-derive from live registry via guessTier.
-          // "writing" has no guessTier class; alias to "general" for candidate lookup.
-          const inferredTier = t === "writing" ? "general" : t;
-          const auto = [...ctx.modelRegistry.getAvailable()]
-            .filter(m => guessTier(m) === inferredTier)
-            .map(modelKey);
-          return auto.length > 0 ? auto : t;
+        if (raw && (!Array.isArray(raw) || raw.length > 0)) {
+          return scopedCandidates(ctx, raw).map(modelKey);
         }
-        return raw;
+        // Unconfigured tiers may derive candidates only from Pi's scoped-model selection.
+        // "writing" has no guessTier class; alias to "general" for candidate lookup.
+        const inferredTier = t === "writing" ? "general" : t;
+        return ctx.scopedModels
+          .map(({ model }) => model)
+          .filter((model) => guessTier(model) === inferredTier)
+          .map(modelKey);
       };
       const pattern = inferPattern(tier);
       const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
