@@ -6,7 +6,7 @@
   "strategy": "subscription_balance",
 
   "categoryStrategies": {
-    "quick": "subscription_preferred",
+    "quick": "subscription_balance",
     "general": "subscription_balance",
     "writing": "subscription_balance",
     "frontier": "subscription_balance"

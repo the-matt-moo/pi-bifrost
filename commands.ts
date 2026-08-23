@@ -639,10 +639,29 @@ async function handleUpdate(
   ctx: ExtensionContext,
   state: BifrostState,
 ): Promise<void> {
+  await handleDiscoveryReconcile(args, ctx, state, "update", false);
+}
+
+async function handleRefresh(
+  args: string,
+  ctx: ExtensionContext,
+  state: BifrostState,
+): Promise<void> {
+  await handleDiscoveryReconcile(args, ctx, state, "refresh", true);
+}
+
+async function handleDiscoveryReconcile(
+  args: string,
+  ctx: ExtensionContext,
+  state: BifrostState,
+  verb: "update" | "refresh",
+  forceScoped: boolean,
+): Promise<void> {
   clearBifrostWidgets(ctx);
-  const requested = parseDiscoveryOptions(args);
+  const parsed = parseDiscoveryOptions(args);
+  const requested = forceScoped ? { scoped: true, free: parsed.free } : parsed;
   if (!usesDiscovery(requested)) {
-    log(ctx, "usage: /bifrost update --scoped [--free] [--write]", "warning");
+    log(ctx, `usage: /bifrost ${verb} --scoped [--free] [--write]`, "warning");
     return;
   }
 
@@ -703,7 +722,7 @@ async function handleUpdate(
     .sort();
 
   uiOutput(ctx, [
-    "--- update ---",
+    `--- ${verb} ---`,
     `discovery: ${discoverySourceLine(discovery)}`,
     `probe: ${verifiedKeys.size} working, ${probeSkipped.length} skipped`,
     ...discovery.skipped.map((item) => `skipped discovery: ${item}`),
@@ -927,6 +946,7 @@ export const BIFROST_COMMAND_OPTIONS: readonly CommandSpec[] = [
   { value: "probe", description: "Probe models (optional --scoped and/or --free)" },
   { value: "init", description: "Generate config (optional --scoped and/or --free)" },
   { value: "update", description: "Reconcile discovery-managed models", argumentHint: "--scoped [--free]" },
+  { value: "refresh", description: "Add new scoped models without recategorizing existing" },
   { value: "sync", description: "Sync live bifrost.json to pi-profile repo", argumentHint: "[--dry-run]" },
   { value: "benchmark", description: "Classify a benchmark prompt", argumentHint: "<prompt>" },
   { value: "cache stats", description: "Show classification cache" },
@@ -1164,6 +1184,12 @@ export function createCommandRouter(
       description: "Reconcile discovery-managed models",
       match: (sub) => sub === "update" || sub.startsWith("update "),
       handler: (args, ctx) => handleUpdate(args, ctx, state),
+    },
+    {
+      value: "refresh",
+      description: "Add new scoped models without recategorizing existing",
+      match: (sub) => sub === "refresh" || sub.startsWith("refresh "),
+      handler: (args, ctx) => handleRefresh(args, ctx, state),
     },
     {
       value: "sync",

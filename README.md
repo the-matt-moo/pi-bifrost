@@ -154,6 +154,7 @@ Narrow discovery scope when needed:
 /bifrost init --scoped          # Pi scoped-models selection only
 /bifrost init --free            # OpenRouter free tier only
 /bifrost init --scoped --free   # union of both
+/bifrost refresh               # add new scoped models, remove stale ones (keeps tiers, auto-reloads)
 ```
 
 ## Usage
@@ -167,6 +168,7 @@ Narrow discovery scope when needed:
 | `/bifrost silence` / `unsilence` | Suppress or restore console output |
 | `/bifrost preview <prompt>` | See model routing, thinking level, and concise reasons without sending |
 | `/bifrost reload` | Reload config after manual edits |
+| `/bifrost refresh` | Add newly scoped models and drop models no longer in scope, without recategorizing existing tiers (auto-reloads on change) |
 | `/bifrost doctor` | Validate config against available models |
 | `/bifrost classifier on` / `off` | Toggle LLM classifier |
 | `/bifrost thinking [off\|advisory\|apply\|status]` | Inspect or set prompt-derived thinking mode |

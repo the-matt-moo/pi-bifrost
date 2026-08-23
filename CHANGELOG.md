@@ -2,6 +2,15 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.3.0
+
+### Added
+- `/bifrost refresh`: adds newly scoped models and removes models no longer in Pi's scoped selection, without recategorizing existing tiers. Aliases the update path (`init`-equivalent discovery, probe, and reconcile) but preserves every currently-categorized model.
+- `/bifrost refresh` invokes the config reload action after any add/remove, keeping live routing in sync with the written config.
+
+### Changed
+- `/bifrost update` and `/bifrost refresh` share one reconcile implementation (`handleDiscoveryReconcile`); refresh simply forces scoped-mode discovery.
+
 ## 4.2.3
 
 ### Fixed
