@@ -106,6 +106,13 @@ export function getCircuitState(
   };
 }
 
+/** Upstream 429s are transient pool exhaustion — use a short cooldown instead of the full circuit-breaker window. */
+const UPSTREAM_RATE_LIMIT_COOLDOWN_MS = 45_000;
+
+function isUpstreamRateLimit(reason: string): boolean {
+  return /\b429\b/.test(reason) && /upstream|temporarily rate.?limit/i.test(reason);
+}
+
 function shouldOpenImmediately(source: string, reason: string): boolean {
   if (source === "agent_settled") return true;
   const match = reason.match(/\b([45]\d{2})\b/);
@@ -125,8 +132,10 @@ export function recordModelFailure(
 
   const current = state.models[model] ?? { failures: [] };
   const wasTrial = current.trialActive;
-  const multiplier = wasTrial ? (current.cooldownMultiplier ?? 1) * 2 : (current.cooldownMultiplier ?? 1);
-  const cooldownMs = resolved.cooldownMinutes * 60_000 * multiplier;
+  const rateLimit = isUpstreamRateLimit(reason);
+  // Don't grow multiplier for transient upstream rate-limits — they aren't model failures.
+  const multiplier = rateLimit ? (current.cooldownMultiplier ?? 1) : (wasTrial ? (current.cooldownMultiplier ?? 1) * 2 : (current.cooldownMultiplier ?? 1));
+  const cooldownMs = rateLimit ? UPSTREAM_RATE_LIMIT_COOLDOWN_MS : resolved.cooldownMinutes * 60_000 * multiplier;
   const failures = [...pruneFailures(current.failures, now, resolved.windowMinutes), now];
   const immediateOpen = shouldOpenImmediately(source, reason);
   const openUntil = immediateOpen || failures.length >= resolved.failureThreshold ? now + cooldownMs : current.openUntil;
