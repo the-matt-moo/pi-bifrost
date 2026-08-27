@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.3.2
+
+### Fixed
+- Add `refresh` subcommand to dashboard options list shown on empty `/bifrost` command.
+
 ## 4.3.1
 
 ### Added
