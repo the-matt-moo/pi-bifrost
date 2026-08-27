@@ -102,7 +102,7 @@ describe("bifrost command ui", () => {
     const select = calls.find((call) => call.kind === "select");
     assert(select, "dashboard should open");
     assert.match(String(select?.title ?? ""), /Bifrost · on · model none/);
-    assert.equal(select?.options?.length, 10);
+    assert.equal(select?.options?.length, 11);
     assert((select?.options ?? []).some((option) => option.includes("Disable routing")));
     assert.equal(state.enabled, false);
   });

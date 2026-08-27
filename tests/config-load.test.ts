@@ -28,6 +28,7 @@ describe("config load", () => {
       assert.deepEqual(config.categoryStrategies, {
         quick: "first",
         general: "first",
+        writing: "first",
         frontier: "first",
       });
       assert.deepEqual(config.models, {});
@@ -90,6 +91,7 @@ describe("config load", () => {
       assert.deepEqual(config.categoryStrategies, {
         quick: "cheapest",
         general: "cheapest",
+        writing: "first",
         frontier: "first",
       });
       assert.deepEqual(config.models, {
