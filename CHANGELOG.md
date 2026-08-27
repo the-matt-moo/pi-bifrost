@@ -2,6 +2,16 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.3.1
+
+### Added
+- Companion extension `auto-model-fallback.ts`: automatic model switching on usage-limit, rate-limit, quota-exceeded, and `ResourceExhausted` errors. Detects limit errors on `turn_end`, marks the exhausted model, and calls `pi.setModel()` to switch to the next enabled model (same provider first, then any other category). Works alongside Bifrost's circuit-breaker -- the exhausted model is also circuit-opened via `agent_settled` so subsequent Bifrost routing skips it.
+- Companion extension `lmstudio-tps.ts`: tokens-per-second metric now exposed via `getStatus()` for footer integration (e.g. `56.4 t/s (310 tokens in 5.50s)`).
+- Footer model line in `model-usage-status.ts` now appends live t/s metrics from `lmstudio-tps` after the context usage display.
+
+### Fixed
+- `lmstudio-tps.ts`: removed `console.log` that leaked `[tps]` debug lines into the user prompt area.
+
 ## 4.3.0
 
 ### Added

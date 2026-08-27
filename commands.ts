@@ -985,6 +985,7 @@ function dashboardCommands(state: Pick<BifrostState, "enabled" | "pinned" | "sil
     "providers",
     "probe",
     "init",
+    "refresh",
     "classifier status",
     "reload",
   ];
