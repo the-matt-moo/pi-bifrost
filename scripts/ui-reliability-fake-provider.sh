@@ -19,6 +19,8 @@ export AGENT_TUI_SOCKET="$tmp/a.sock" AGENT_TUI_SESSION_STORE="$tmp/s.jsonl" AGE
 cleanup(){ "$A" --json sessions cleanup --all --yes >/dev/null 2>&1||true; "$A" --json daemon stop --force --yes >/dev/null 2>&1||true; kill "$server" 2>/dev/null||true; [[ "${KEEP:-}" == 1 ]] || rm -rf "$tmp"; }; trap cleanup EXIT
 
 poll_until(){ local path="$1" needle="$2" max="${3:-60}"; for _ in $(seq 1 "$max"); do [[ -f "$path" ]] && grep -q "$needle" "$path" && return 0; sleep 1; done; echo "timed out" >&2; return 1; }
+model_attempts(){ curl -sf "http://127.0.0.1:$port/_stats" | node -e 'let s="";process.stdin.on("data",x=>s+=x).on("end",()=>console.log(JSON.parse(s).attempts[process.argv[1]]??0))' "$1"; }
+wait_model_attempts_gt(){ local model="$1" before="$2" max="${3:-60}"; for _ in $(seq 1 "$max"); do [[ "$(model_attempts "$model")" -gt "$before" ]] && return 0; sleep 1; done; echo "timed out waiting for $model retry" >&2; return 1; }
 start_pi(){ "$A" --json daemon start >/dev/null; local run; run=$($A --json run --cwd "$work" --cols 120 --rows 36 --env "PI_CODING_AGENT_DIR=$home/.pi/agent" --env "PI_SKIP_VERSION_CHECK=1" -- "$PI" -e "$ROOT" --approve --no-session --no-tools --provider fake --model healthy); node -e 'let s="";process.stdin.on("data",x=>s+=x).on("end",()=>console.log(JSON.parse(s).session_id))' <<<"$run"; }
 prompt(){ "$A" --session "$1" type "$2" >/dev/null; "$A" --session "$1" press Escape Enter >/dev/null; }
 
@@ -62,17 +64,20 @@ echo 'scenario 1: pass'
 # Verify server still alive
 curl -sf "http://127.0.0.1:$port/_stats" >/dev/null || { echo 'FAIL: server died after scenario 1' >&2; exit 1; }
 
-# ── Scenario 2: quota (429) opens circuit ──
-echo '--- scenario 2: quota ---'
+# ── Scenario 2: quota (429) opens circuit and retries on a healthy model ──
+echo '--- scenario 2: quota auto-retry ---'
 rm -f "$work/.pi/bifrost-reliability.json"
 cat >"$work/bifrost.json" <<'EOF'
-{"enabled":true,"default":"economical","strategy":"cheapest","classifier":{"enabled":false},"reliability":{"failureThreshold":1,"windowMinutes":5,"cooldownMinutes":60},"models":{"economical":["fake/quota","fake/healthy"]},"rules":[{"pattern":"quota","model":"economical"}]}
+{"enabled":true,"default":"economical","strategy":"cheapest","classifier":{"enabled":false},"reliability":{"failureThreshold":1,"windowMinutes":5,"cooldownMinutes":60,"autoRetry":true,"maxAutoRetries":2},"models":{"economical":["fake/quota","fake/healthy"]},"rules":[{"pattern":"quota","model":"economical"}]}
 EOF
 sid=$(start_pi)
 "$A" --session "$sid" wait 'Bifrost' --assert --timeout 15000 >/dev/null
+healthy_before=$(model_attempts healthy)
 prompt "$sid" quota
 poll_until "$work/.pi/bifrost-reliability.json" 'fake/quota'
 grep -q 'openUntil' "$work/.pi/bifrost-reliability.json" || { echo 'FAIL: quota circuit not open' >&2; exit 1; }
+wait_model_attempts_gt healthy "$healthy_before"
+"$A" --session "$sid" wait 'auto-retrying on fake/healthy' --assert --timeout 15000 >/dev/null
 echo 'scenario 2: pass'
 "$A" --json sessions cleanup --all --yes >/dev/null 2>&1||true; "$A" --json daemon stop --force --yes >/dev/null 2>&1||true
 curl -sf "http://127.0.0.1:$port/_stats" >/dev/null || { echo 'FAIL: server died after scenario 2' >&2; exit 1; }

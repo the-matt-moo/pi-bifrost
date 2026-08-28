@@ -5,6 +5,8 @@ export interface ReliabilityConfig {
   failureThreshold?: number;
   windowMinutes?: number;
   cooldownMinutes?: number;
+  autoRetry?: boolean;
+  maxAutoRetries?: number;
   path?: string;
 }
 
@@ -38,6 +40,8 @@ export const DEFAULT_RELIABILITY: Required<Omit<ReliabilityConfig, "path">> = {
   failureThreshold: 3,
   windowMinutes: 5,
   cooldownMinutes: 60,
+  autoRetry: true,
+  maxAutoRetries: 2,
 };
 
 export function resolveReliabilityConfig(config?: ReliabilityConfig): Required<Omit<ReliabilityConfig, "path">> & Pick<ReliabilityConfig, "path"> {
@@ -46,6 +50,8 @@ export function resolveReliabilityConfig(config?: ReliabilityConfig): Required<O
     failureThreshold: config?.failureThreshold ?? DEFAULT_RELIABILITY.failureThreshold,
     windowMinutes: config?.windowMinutes ?? DEFAULT_RELIABILITY.windowMinutes,
     cooldownMinutes: config?.cooldownMinutes ?? DEFAULT_RELIABILITY.cooldownMinutes,
+    autoRetry: config?.autoRetry ?? DEFAULT_RELIABILITY.autoRetry,
+    maxAutoRetries: config?.maxAutoRetries ?? DEFAULT_RELIABILITY.maxAutoRetries,
     path: config?.path,
   };
 }
@@ -108,6 +114,10 @@ export function getCircuitState(
 
 /** Upstream 429s are transient pool exhaustion — use a short cooldown instead of the full circuit-breaker window. */
 const UPSTREAM_RATE_LIMIT_COOLDOWN_MS = 45_000;
+
+export function isRetryableProviderLimit(reason: string): boolean {
+  return /\b429\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|request limit reached/i.test(reason);
+}
 
 function isUpstreamRateLimit(reason: string): boolean {
   return /\b429\b/.test(reason) && /upstream|temporarily rate.?limit/i.test(reason);

@@ -306,6 +306,13 @@ export function validateConfig(
     });
   }
 
+  if (reliability?.maxAutoRetries !== undefined && (!Number.isInteger(reliability.maxAutoRetries) || reliability.maxAutoRetries < 0)) {
+    issues.push({
+      severity: "error",
+      message: `Reliability maxAutoRetries must be an integer >= 0, got ${reliability.maxAutoRetries}.`,
+    });
+  }
+
   if (config.rules) {
     for (let i = 0; i < config.rules.length; i++) {
       const rule = config.rules[i];
