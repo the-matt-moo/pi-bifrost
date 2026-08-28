@@ -10,7 +10,7 @@ import {
   lookupCache,
   touchCacheEntry,
   loadCache,
-  saveCache,
+  createDeferredCacheWriter,
   updateCache,
   demoteCacheEntry,
   warmStartCache,
@@ -54,6 +54,7 @@ import {
   setBifrostStatus,
   setBifrostWorkingMessage,
   shouldRefreshRegistry,
+  refreshRegistry,
 } from "./ux-status.js";
 
 // ── Pipeline builder (composition root) ────────────────────────
@@ -87,6 +88,8 @@ function buildPipeline(
   cacheEntries: CacheEntry[],
   classifierEnabled: boolean,
   sessionContext: SessionRoutingContext,
+  classifierCooldowns: Map<string, number>,
+  scheduleCacheSave: () => void,
 ): ClassificationPipeline {
   const tiers = Object.keys(config.models ?? {});
   const cacheCfg = config.cache;
@@ -118,24 +121,30 @@ function buildPipeline(
       const entry = lookupCache(cacheEntries, text, threshold);
       if (entry) {
         touchCacheEntry(entry);
+        scheduleCacheSave();
         return entry.category;
       }
       return undefined;
     },
     classifierModels,
-    classifyWithLLM: (model, text, tiers) =>
+    classifyWithLLM: (model, text, tiers, signal) =>
       invokeClassifier(ctx, model, tiers, text, {
         systemPrompt: config.classifier?.systemPrompt,
         maxTokens: config.classifier?.maxTokens,
         temperature: config.classifier?.temperature,
         method: config.classifier?.method,
         tierDescriptions,
+        signal: signal && ctx.signal ? AbortSignal.any([signal, ctx.signal]) : (signal ?? ctx.signal),
       }),
     regexRules: rules,
     defaultTier: config.default,
     tiers,
     sessionContext,
     complexityEnabled: true,
+    classifierMaxAttempts: config.classifier?.maxAttempts ?? 2,
+    classifierTimeoutMs: config.classifier?.timeoutMs ?? 10_000,
+    classifierCooldownMs: (config.classifier?.cooldownSeconds ?? 60) * 1000,
+    classifierCooldowns,
   });
 }
 
@@ -185,10 +194,21 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   let pipeline: ClassificationPipeline | undefined;
   let startupValidated = false;
   const warnedPatterns = new Set<string>();
+  const classifierCooldowns = new Map<string, number>();
+  const cacheWriter = createDeferredCacheWriter(cacheFilePath, () => state.cacheEntries);
+  process.once("exit", () => cacheWriter.flushSync());
 
   function getPipeline(ctx: ExtensionContext): ClassificationPipeline {
     if (!pipeline) {
-      pipeline = buildPipeline(ctx, state.config, state.cacheEntries, state.classifierEnabled, sessionContext);
+      pipeline = buildPipeline(
+        ctx,
+        state.config,
+        state.cacheEntries,
+        state.classifierEnabled,
+        sessionContext,
+        classifierCooldowns,
+        cacheWriter.schedule,
+      );
     }
     return pipeline;
   }
@@ -232,6 +252,13 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }),
     lastRegistryRefreshAt: undefined,
     forceRegistryRefresh: false,
+    refreshRegistry: (ctx) => refreshRegistry(
+      state,
+      () => ctx.modelRegistry.refresh(),
+      invalidatePipeline,
+    ),
+    scheduleCacheSave: cacheWriter.schedule,
+    flushCacheSave: cacheWriter.flush,
   };
 
   function inferPattern(ctx: ExtensionContext, tier: string): string[] {
@@ -360,7 +387,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const maxEntries = state.config.cache?.maxEntries ?? DEFAULT_MAX_ENTRIES;
       state.cacheEntries = warmStartCache(state.cacheEntries, rules, tiers, maxEntries);
       if (state.cacheEntries.length > 0) {
-        saveCache(cacheFilePath, state.cacheEntries);
+        cacheWriter.schedule();
         invalidatePipeline();
         debug("cache", "warm_start", { entries: state.cacheEntries.length });
       }
@@ -512,7 +539,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const tiers = Object.keys(state.config.models ?? {});
       const escalated = demoteCacheEntry(state.cacheEntries, lastRoutedPrompt, tiers);
       if (escalated) {
-        saveCache(cacheFilePath, state.cacheEntries);
+        cacheWriter.schedule();
         invalidatePipeline();
         debug("feedback", "demotion_escalated", { prompt: lastRoutedPrompt.slice(0, 50) });
       }
@@ -577,24 +604,26 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     const endInput = debugMeasure("input", "total");
     debug("input", "prompt", { length: promptText.length });
 
-    const shouldRefresh = state.classifierEnabled
-      ? shouldRefreshRegistry(state, Date.now(), REGISTRY_REFRESH_TTL_MS)
-      : false;
+    const mustRefreshRegistry = state.forceRegistryRefresh || ctx.modelRegistry.getAvailable().length === 0;
+    const shouldRefresh = state.classifierEnabled && (
+      mustRefreshRegistry ||
+      (!state.registryRefreshInflight && shouldRefreshRegistry(state, Date.now(), REGISTRY_REFRESH_TTL_MS))
+    );
 
     try {
       if (shouldRefresh) {
-        setBifrostWorkingMessage(ctx, "Bifrost checking models...");
+        const mustWait = mustRefreshRegistry;
+        if (mustWait) setBifrostWorkingMessage(ctx, "Bifrost checking models...");
         const endRefresh = debugMeasure("input", "registry.refresh");
-        try {
-          await ctx.modelRegistry.refresh();
-          state.lastRegistryRefreshAt = Date.now();
-          state.forceRegistryRefresh = false;
-          invalidatePipeline();
-        } catch (err) {
-          debug("input", "registry.refresh.error", { error: String(err) });
-          log(ctx, `model registry refresh failed: ${String(err).slice(0, 200)}`, "warning");
-        } finally {
-          endRefresh();
+        const refresh = state.refreshRegistry(ctx).then((ok) => {
+          endRefresh({ background: !mustWait, ok });
+          if (!ok) debug("input", "registry.refresh.error");
+          return ok;
+        });
+        if (mustWait && !(await refresh)) {
+          log(ctx, "model registry refresh failed; using current snapshot", "warning");
+        } else if (!mustWait) {
+          void refresh;
         }
       }
 
@@ -639,7 +668,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         ? getStrategy(state.config.categoryStrategies, state.config.strategy, defaultTier)
         : strategy;
 
-      const { unresolved } = diagnoseCandidates(ctx, pattern);
+      const { candidates: requestedCandidates, unresolved } = diagnoseCandidates(ctx, pattern);
       for (const p of unresolved) {
         const warnKey = `${tier}:${p}`;
         if (!warnedPatterns.has(warnKey)) {
@@ -659,6 +688,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         reliabilityConfig: state.config.reliability,
         quota: quotaStore.getSnapshot(),
         quotaConfig: state.config.quotaRouting,
+        requestedCandidates,
       });
       const model = resolved.selected;
       const selectedTier = resolved.selectedTier ?? tier;
@@ -695,7 +725,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         if (state.config.cache?.enabled ?? true) {
           const endCacheSave = debugMeasure("input", "cacheSave");
           state.cacheEntries = updateCache(state.cacheEntries, promptText, tier, maxEntries);
-          saveCache(cacheFilePath, state.cacheEntries);
+          cacheWriter.schedule();
           invalidatePipeline();
           endCacheSave({ entries: state.cacheEntries.length });
         }

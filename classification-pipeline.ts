@@ -31,6 +31,7 @@ export interface PipelineDeps {
     model: ClassifierModel,
     text: string,
     tiers: readonly string[],
+    signal?: AbortSignal,
   ) => Promise<string | undefined>;
   /** Regex routing rules. First match wins. */
   readonly regexRules: readonly RouteRule[];
@@ -42,6 +43,14 @@ export interface PipelineDeps {
   readonly sessionContext?: SessionRoutingContext;
   /** Enable complexity-based short-circuiting. */
   readonly complexityEnabled?: boolean;
+  /** Maximum classifier models attempted for one prompt. */
+  readonly classifierMaxAttempts?: number;
+  /** Total classifier wall-clock budget for one prompt. */
+  readonly classifierTimeoutMs?: number;
+  /** Temporary failure cooldown shared across pipeline rebuilds. */
+  readonly classifierCooldownMs?: number;
+  readonly classifierCooldowns?: Map<string, number>;
+  readonly now?: () => number;
 }
 
 // ── Pipeline interface ─────────────────────────────────────────
@@ -62,6 +71,11 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
     tiers,
     sessionContext,
     complexityEnabled,
+    classifierMaxAttempts = 2,
+    classifierTimeoutMs = 10_000,
+    classifierCooldownMs = 60_000,
+    classifierCooldowns = new Map<string, number>(),
+    now = Date.now,
   } = deps;
 
   async function classify(text: string): Promise<ClassificationResult> {
@@ -107,22 +121,47 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
       }
     }
 
-    // Stage 3: LLM classifier — classifier accuracy beats regex tier matches.
-    if (classifierModels.length > 0) {
-      for (const model of classifierModels) {
-        try {
-          const endLLM = debugMeasure("pipeline", "classifier.attempt");
-          const tier = await classifyWithLLM(model, text, tiers);
-          const modelId = model.kind === "registry" ? model.model.id : model.id;
-          endLLM({ model: modelId, tier });
-          if (tier && tiers.includes(tier)) {
-            debug("pipeline", "result", { source: "classifier", tier });
-            return { kind: "classified", tier, source: "classifier" };
+    // Stage 3: bounded LLM classifier — classifier accuracy beats regex tier matches.
+    if (classifierModels.length > 0 && classifierMaxAttempts > 0) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), classifierTimeoutMs);
+      timer.unref?.();
+      const timedOut = new Promise<undefined>((resolve) => {
+        controller.signal.addEventListener("abort", () => resolve(undefined), { once: true });
+      });
+      let attempts = 0;
+      try {
+        for (const model of classifierModels) {
+          if (controller.signal.aborted || attempts >= classifierMaxAttempts) break;
+          const modelId = model.kind === "registry"
+            ? `${model.model.provider}/${model.model.id}`
+            : `endpoint/${model.id}`;
+          if ((classifierCooldowns.get(modelId) ?? 0) > now()) {
+            debug("pipeline", "classifier.cooldown", { model: modelId });
+            continue;
           }
-        } catch (err) {
-          debug("pipeline", "classifier.error", { error: String(err) });
-          console.error(`[bifrost] classifier model failed: ${err}`);
+          attempts++;
+          try {
+            const endLLM = debugMeasure("pipeline", "classifier.attempt");
+            const tier = await Promise.race([
+              classifyWithLLM(model, text, tiers, controller.signal),
+              timedOut,
+            ]);
+            endLLM({ model: modelId, tier });
+            if (tier && tiers.includes(tier)) {
+              classifierCooldowns.delete(modelId);
+              debug("pipeline", "result", { source: "classifier", tier });
+              return { kind: "classified", tier, source: "classifier" };
+            }
+            classifierCooldowns.set(modelId, now() + classifierCooldownMs);
+          } catch (err) {
+            classifierCooldowns.set(modelId, now() + classifierCooldownMs);
+            debug("pipeline", "classifier.error", { model: modelId, error: String(err) });
+            console.error(`[bifrost] classifier model failed: ${err}`);
+          }
         }
+      } finally {
+        clearTimeout(timer);
       }
     }
 

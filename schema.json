@@ -323,7 +323,7 @@
             "subprocess",
             "auto"
           ],
-          "description": "How to invoke the classifier. 'direct' uses a fast OpenAI-compatible HTTP call (needs compatible API). 'subprocess' spawns a fresh pi CLI (slower but supports any provider). 'auto' tries direct first, falls back to subprocess.",
+          "description": "How to invoke the classifier. 'direct' uses the provider API. 'subprocess' spawns a fresh pi CLI. 'auto' uses subprocess only when direct transport is unavailable; completed invalid direct responses are not resent.",
           "default": "auto"
         },
         "maxTokens": {
@@ -339,6 +339,24 @@
           "maximum": 2,
           "description": "Temperature for classifier sampling. 0 for deterministic category selection.",
           "default": 0
+        },
+        "timeoutMs": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Total wall-clock budget across classifier model attempts.",
+          "default": 10000
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum classifier models attempted for one prompt.",
+          "default": 2
+        },
+        "cooldownSeconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Temporary cooldown after a classifier model fails or returns an invalid tier.",
+          "default": 60
         },
         "fallbackToRegex": {
           "type": "boolean",

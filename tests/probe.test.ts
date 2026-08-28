@@ -158,4 +158,59 @@ describe("probe transport", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  it("reuses fresh successful probes and honors force", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "bifrost-probe-cache-"));
+    const cwdBefore = process.cwd();
+    const model = {
+      provider: "test",
+      id: "fast",
+      api: "openai-completions",
+      baseUrl: "https://example.invalid/v1",
+      cost: { input: 0, output: 0 },
+    };
+    const otherModel = { ...model, id: "other" };
+    let available = [model, otherModel];
+    let calls = 0;
+    const ctx = {
+      modelRegistry: {
+        getAvailable: () => available,
+        getProvider: () => ({
+          streamSimple: () => ({
+            result: async () => {
+              calls++;
+              return {
+                content: [{ type: "text", text: "2" }],
+                usage: { totalTokens: 2 },
+                stopReason: "stop",
+              };
+            },
+          }),
+        }),
+        getProviderAuth: async () => ({ auth: { apiKey: "key" } }),
+      },
+    } as never;
+
+    try {
+      process.chdir(cwd);
+      const first = await runProbe(ctx);
+      assert.equal(first.cached, 0);
+      assert.equal(calls, 2);
+      available = [model];
+      const second = await runProbe(ctx);
+      assert.equal(second.cached, 1);
+      assert.equal(second.freshResults.length, 0);
+      assert.equal(calls, 2);
+      const forced = await runProbe(ctx, undefined, undefined, { force: true });
+      assert.equal(forced.cached, 0);
+      assert.equal(calls, 3);
+      available = [otherModel];
+      const preserved = await runProbe(ctx);
+      assert.equal(preserved.cached, 1);
+      assert.equal(calls, 3);
+    } finally {
+      process.chdir(cwdBefore);
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });

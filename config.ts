@@ -24,6 +24,12 @@ export interface ClassifierConfig {
   systemPrompt?: string;
   maxTokens?: number;
   temperature?: number;
+  /** Total classifier budget across model attempts. */
+  timeoutMs?: number;
+  /** Maximum classifier models attempted per prompt. */
+  maxAttempts?: number;
+  /** Temporary cooldown after a failed classifier attempt. */
+  cooldownSeconds?: number;
   fallbackToRegex?: boolean;
 }
 
@@ -268,6 +274,17 @@ export function validateConfig(
       severity: "warning",
       message: `Cache maxEntries is ${config.cache.maxEntries}, should be > 0.`,
     });
+  }
+
+  const classifier = config.classifier;
+  if (classifier?.timeoutMs !== undefined && (!Number.isFinite(classifier.timeoutMs) || classifier.timeoutMs < 1)) {
+    issues.push({ severity: "error", message: `Classifier timeoutMs must be >= 1, got ${classifier.timeoutMs}.` });
+  }
+  if (classifier?.maxAttempts !== undefined && (!Number.isInteger(classifier.maxAttempts) || classifier.maxAttempts < 1)) {
+    issues.push({ severity: "error", message: `Classifier maxAttempts must be an integer >= 1, got ${classifier.maxAttempts}.` });
+  }
+  if (classifier?.cooldownSeconds !== undefined && (!Number.isFinite(classifier.cooldownSeconds) || classifier.cooldownSeconds < 0)) {
+    issues.push({ severity: "error", message: `Classifier cooldownSeconds must be >= 0, got ${classifier.cooldownSeconds}.` });
   }
 
   const quota = config.quotaRouting;

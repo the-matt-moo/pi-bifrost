@@ -8,6 +8,7 @@ export const REGISTRY_REFRESH_TTL_MS = 30_000;
 export interface RegistryRefreshState {
   lastRegistryRefreshAt?: number;
   forceRegistryRefresh?: boolean;
+  registryRefreshInflight?: Promise<boolean>;
 }
 
 export interface BifrostModeState {
@@ -27,6 +28,29 @@ export function shouldRefreshRegistry(
   if (state.forceRegistryRefresh) return true;
   if (state.lastRegistryRefreshAt === undefined) return true;
   return now - state.lastRegistryRefreshAt >= ttlMs;
+}
+
+/** Deduplicates registry refreshes; callers choose whether to await the shared work. */
+export function refreshRegistry(
+  state: RegistryRefreshState,
+  refresh: () => Promise<unknown>,
+  onSuccess?: () => void,
+  now = Date.now,
+): Promise<boolean> {
+  if (state.registryRefreshInflight) return state.registryRefreshInflight;
+  const inflight = refresh()
+    .then(() => {
+      state.lastRegistryRefreshAt = now();
+      state.forceRegistryRefresh = false;
+      onSuccess?.();
+      return true;
+    })
+    .catch(() => false)
+    .finally(() => {
+      if (state.registryRefreshInflight === inflight) state.registryRefreshInflight = undefined;
+    });
+  state.registryRefreshInflight = inflight;
+  return inflight;
 }
 
 function statusText(ctx: ExtensionContext, tone: "dim" | "accent" | "success" | "warning" | "error", message: string): string {

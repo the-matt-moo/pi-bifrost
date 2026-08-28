@@ -182,6 +182,7 @@ async function fetchAnthropicQuota(): Promise<ProviderQuota | undefined> {
   if (!token) return undefined;
   try {
     const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      signal: AbortSignal.timeout(4000),
       headers: {
         Authorization: `Bearer ${token}`,
         "anthropic-beta": "oauth-2025-04-20",
@@ -210,11 +211,29 @@ async function fetchAnthropicQuota(): Promise<ProviderQuota | undefined> {
   }
 }
 
+type QuotaFetcher = () => Promise<[
+  ProviderQuota | undefined,
+  ProviderQuota | undefined,
+  ProviderQuota | undefined,
+]>;
+
 export class QuotaStore {
   private snapshot: QuotaSnapshot = { byProvider: {}, fetchedAt: 0 };
   private inflight: Promise<void> | undefined;
+  private cfg: QuotaRoutingConfig | undefined;
+  private fetchQuotas: QuotaFetcher;
 
-  constructor(private cfg: QuotaRoutingConfig | undefined) {}
+  constructor(
+    cfg: QuotaRoutingConfig | undefined,
+    fetchQuotas: QuotaFetcher = () => Promise.all([
+      fetchCodexQuota(),
+      fetchAntigravityQuota(),
+      fetchAnthropicQuota(),
+    ]),
+  ) {
+    this.cfg = cfg;
+    this.fetchQuotas = fetchQuotas;
+  }
 
   getSnapshot(): QuotaSnapshot {
     return this.snapshot;
@@ -233,12 +252,12 @@ export class QuotaStore {
   /** Refresh only when the snapshot is older than refreshMinutes or empty. Never throws. */
   async refreshIfStale(now: number): Promise<void> {
     const refresh = this.cfg?.refreshMinutes ?? 30;
-    if (Object.keys(this.snapshot.byProvider).length > 0 &&
+    if (this.snapshot.fetchedAt > 0 &&
         now - this.snapshot.fetchedAt < refresh * 60_000) {
       return;
     }
     if (this.inflight) return this.inflight;
-    this.inflight = this.fetch();
+    this.inflight = this.fetch(now);
     try {
       await this.inflight;
     } finally {
@@ -246,8 +265,8 @@ export class QuotaStore {
     }
   }
 
-  private async fetch(): Promise<void> {
-    const [codex, ag, anthropic] = await Promise.all([fetchCodexQuota(), fetchAntigravityQuota(), fetchAnthropicQuota()]);
+  private async fetch(now: number): Promise<void> {
+    const [codex, ag, anthropic] = await this.fetchQuotas();
     const byProvider: Record<string, ProviderQuota> = {};
     if (codex) byProvider["openai-codex"] = codex;
     if (ag) byProvider["antigravity"] = ag;
@@ -256,7 +275,7 @@ export class QuotaStore {
     for (const [provider, pinned] of Object.entries(this.cfg?.providers ?? {})) {
       byProvider[provider] = { ...pinned };
     }
-    this.snapshot = { byProvider, fetchedAt: Date.now() };
+    this.snapshot = { byProvider, fetchedAt: now };
   }
 
   /** Test seam. */

@@ -7,7 +7,7 @@ import {
   selectWeighted,
   subscriptionWeights,
 } from "../routing.ts";
-import type { QuotaSnapshot } from "../quota.ts";
+import { QuotaStore, type QuotaSnapshot } from "../quota.ts";
 
 function model(provider: string, id: string, cost = 1): Model<Api> {
   return {
@@ -45,6 +45,21 @@ function withRandom<T>(rand: number, fn: () => T): T {
 
 const NOW = 1_000_000_000_000;
 const FRESH = { gamma: 3, reservePercent: 0.03, staleMinutes: 15 };
+
+describe("QuotaStore refresh backoff", () => {
+  it("backs off after an empty quota result", async () => {
+    let calls = 0;
+    const store = new QuotaStore({ refreshMinutes: 30 }, async () => {
+      calls++;
+      return [undefined, undefined, undefined];
+    });
+    await store.refreshIfStale(1_000);
+    await store.refreshIfStale(2_000);
+    assert.equal(calls, 1);
+    await store.refreshIfStale(1_000 + 30 * 60_000);
+    assert.equal(calls, 2);
+  });
+});
 
 describe("billingClass", () => {
   it("classifies cost-free models as free first", () => {

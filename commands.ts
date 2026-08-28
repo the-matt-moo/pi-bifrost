@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { loadRuntimeState, runtimeStatePath } from "./runtime-state.ts";
@@ -8,7 +8,7 @@ import type { BifrostConfig } from "./config.ts";
 import type { ThinkingLevel } from "./thinking.ts";
 import { DEFAULT_RULES, loadConfig, readJson } from "./config.ts";
 import type { CacheEntry } from "./cache.ts";
-import { cachePath, loadCache, saveCache, DEFAULT_MAX_ENTRIES, DEFAULT_THRESHOLD } from "./cache.ts";
+import { cachePath, loadCache, DEFAULT_MAX_ENTRIES, DEFAULT_THRESHOLD } from "./cache.ts";
 import type { ClassificationPipeline } from "./classification-pipeline.ts";
 import { setupDebug, debug, debugMeasure } from "./debug.ts";
 import { runProbe, PROBE_PROMPT_TEXT, type ProbeResult } from "./probe.ts";
@@ -66,6 +66,10 @@ export interface BifrostState {
   saveModeState: () => void;
   lastRegistryRefreshAt?: number;
   forceRegistryRefresh?: boolean;
+  registryRefreshInflight?: Promise<boolean>;
+  refreshRegistry: (ctx: ExtensionContext) => Promise<boolean>;
+  scheduleCacheSave: () => void;
+  flushCacheSave: () => Promise<void>;
 }
 
 const silentContexts = new WeakSet<ExtensionContext>();
@@ -338,16 +342,11 @@ async function refreshAndDiscover(
   options: DiscoveryOptions,
 ): Promise<DiscoveryResult> {
   uiBusy(ctx, "Refreshing Pi model registry...");
-  try {
-    await ctx.modelRegistry.refresh();
-    state.lastRegistryRefreshAt = Date.now();
-    state.forceRegistryRefresh = false;
-    state.invalidatePipeline();
-  } catch (err) {
-    log(ctx, `Model registry refresh failed; using current snapshot: ${String(err).slice(0, 200)}`, "warning");
-  } finally {
-    uiDone(ctx);
+  const refreshed = await state.refreshRegistry(ctx);
+  if (!refreshed) {
+    log(ctx, "Model registry refresh failed; using current snapshot.", "warning");
   }
+  uiDone(ctx);
 
   const discovery = discoverModels(ctx, options);
   for (const message of discovery.messages) log(ctx, message, "warning");
@@ -388,6 +387,7 @@ async function handleInit(
   clearBifrostWidgets(ctx);
 
   const discoveryOptions = parseDiscoveryOptions(args);
+  const forceProbe = args.trim().split(/\s+/).includes("--force");
   const discoveryEnabled = usesDiscovery(discoveryOptions);
   const discovery = discoveryEnabled
     ? await refreshAndDiscover(ctx, state, discoveryOptions)
@@ -399,39 +399,13 @@ async function handleInit(
     return;
   }
 
-  // Keep legacy cached-probe behavior only when no discovery flags are used.
-  const probePath = join(process.cwd(), ".pi", "bifrost-probe.json");
   let workingModels: { provider: string; model: string; cost: { input: number; output: number }; duration_ms: number }[] = [];
   let probeLoaded = false;
   let probeAge = "";
 
-  if (!discoveryEnabled && existsSync(probePath)) {
-    try {
-      const probeData = JSON.parse(readFileSync(probePath, "utf-8"));
-      const probeStat = statSync(probePath);
-      const ageMs = Date.now() - probeStat.mtimeMs;
-      const ageMin = Math.round(ageMs / 60000);
-
-      if (ageMs < 3600_000) {
-        workingModels = probeData
-          .filter((r: any) => r.status === "ok")
-          .map((r: any) => ({
-            provider: r.provider,
-            model: r.model,
-            cost: { input: r.cost_input ?? 0, output: r.cost_output ?? 0 },
-            duration_ms: r.duration_ms ?? 0,
-          }));
-        probeAge = `${ageMin}m ago`;
-        probeLoaded = true;
-      }
-    } catch {
-      // Corrupt — will re-probe below.
-    }
-  }
-
   const collectionRankingPromise = discoveryOptions.free ? fetchFreeModelRanking() : Promise.resolve(null);
 
-  // If no fresh probe data, run probe inline.
+  // Probe runner reuses fresh successes and retests stale/failed models.
   if (!probeLoaded) {
     const available = selectedModels ?? ctx.modelRegistry.getAvailable();
     const availableCount = available.length;
@@ -441,7 +415,7 @@ async function handleInit(
     const lastModels: string[] = [];
 
     uiBusy(ctx, `Probing ${availableCount} models...`);
-    const { results } = await runProbe(ctx, (done, total, last) => {
+    const { results, freshResults, cached } = await runProbe(ctx, (done, total, last) => {
       if (last.status === "ok") okCount++;
       // models parameter passed below
       else if (last.status === "error" || last.status === "timeout") errCount++;
@@ -456,9 +430,9 @@ async function handleInit(
           ...lastModels,
         ]);
       }
-    }, available);
+    }, available, { force: forceProbe });
     uiDone(ctx);
-    applyProbeOutcomes(state, results);
+    applyProbeOutcomes(state, freshResults);
 
     workingModels = results
       .filter((r) => r.status === "ok")
@@ -469,7 +443,7 @@ async function handleInit(
         duration_ms: r.duration_ms ?? 0,
       }));
     probeLoaded = true;
-    probeAge = "just now";
+    probeAge = cached === results.length ? "cached" : (cached > 0 ? `${cached} cached` : "just now");
 
     const ok = results.filter((r) => r.status === "ok").length;
     const errors = results.filter((r) => r.status === "error").length;
@@ -659,9 +633,10 @@ async function handleDiscoveryReconcile(
 ): Promise<void> {
   clearBifrostWidgets(ctx);
   const parsed = parseDiscoveryOptions(args);
+  const forceProbe = args.trim().split(/\s+/).includes("--force");
   const requested = forceScoped ? { scoped: true, free: parsed.free } : parsed;
   if (!usesDiscovery(requested)) {
-    log(ctx, `usage: /bifrost ${verb} --scoped [--free] [--write]`, "warning");
+    log(ctx, `usage: /bifrost ${verb} --scoped [--free] [--force] [--write]`, "warning");
     return;
   }
 
@@ -678,9 +653,9 @@ async function handleDiscoveryReconcile(
   const updateRankingPromise = selected.free ? fetchFreeModelRanking() : Promise.resolve(null);
 
   uiBusy(ctx, `Probing ${discovery.candidates.length} discovered model(s)...`);
-  const { results } = await runProbe(ctx, undefined, discovery.candidates);
+  const { results, freshResults } = await runProbe(ctx, undefined, discovery.candidates, { force: forceProbe });
   uiDone(ctx);
-  applyProbeOutcomes(state, results);
+  applyProbeOutcomes(state, freshResults);
 
   const verifiedKeys = new Set(
     results.filter((result) => result.status === "ok").map((result) => `${result.provider}/${result.model}`),
@@ -943,10 +918,10 @@ export const BIFROST_COMMAND_OPTIONS: readonly CommandSpec[] = [
   { value: "unsilence", description: "Show Bifrost output" },
   { value: "reload", description: "Reload config after editing" },
   { value: "providers", description: "List available providers" },
-  { value: "probe", description: "Probe models (optional --scoped and/or --free)" },
-  { value: "init", description: "Generate config (optional --scoped and/or --free)" },
-  { value: "update", description: "Reconcile discovery-managed models", argumentHint: "--scoped [--free]" },
-  { value: "refresh", description: "Add new scoped models without recategorizing existing" },
+  { value: "probe", description: "Probe models (optional --scoped, --free, or --force)" },
+  { value: "init", description: "Generate config (optional --scoped, --free, or --force)" },
+  { value: "update", description: "Reconcile discovery-managed models", argumentHint: "--scoped [--free] [--force]" },
+  { value: "refresh", description: "Add new scoped models without recategorizing existing", argumentHint: "[--free] [--force]" },
   { value: "sync", description: "Sync live bifrost.json to pi-profile repo", argumentHint: "[--dry-run]" },
   { value: "benchmark", description: "Classify a benchmark prompt", argumentHint: "<prompt>" },
   { value: "cache stats", description: "Show classification cache" },
@@ -1051,8 +1026,9 @@ export function createCommandRouter(
       syncBifrostModeStatus(ctx, state);
       log(ctx, "Bifrost output enabled");
     }),
-    exact("reload", "Reload config after editing", (_, ctx) => {
+    exact("reload", "Reload config after editing", async (_, ctx) => {
       const done = debugMeasure("command", "reload");
+      await state.flushCacheSave();
       state.config = loadConfig(process.cwd(), state.extensionDir);
       // Re-init debug — user may have updated debug config since startup.
       setupDebug(state.config.debug ?? { enabled: false }, process.cwd());
@@ -1103,10 +1079,11 @@ export function createCommandRouter(
     // Probe — test every model with a tiny prompt
     {
       value: "probe",
-      description: "Probe models (optional --scoped and/or --free)",
+      description: "Probe models (optional --scoped, --free, or --force)",
       match: (sub) => sub === "probe" || sub.startsWith("probe "),
       handler: async (args, ctx) => {
         const options = parseDiscoveryOptions(args);
+        const forceProbe = args.trim().split(/\s+/).includes("--force");
         const discovery = usesDiscovery(options)
           ? await refreshAndDiscover(ctx, state, options)
           : undefined;
@@ -1119,9 +1096,14 @@ export function createCommandRouter(
         uiBusy(ctx, `Probing ${available.length} models...`);
         log(ctx, `Probing ${available.length} model(s) with "${PROBE_PROMPT_TEXT}"...`);
 
-        const { results, path } = await runProbe(ctx, undefined, discovery ? available : undefined);
+        const { results, freshResults, path, cached } = await runProbe(
+          ctx,
+          undefined,
+          discovery ? available : undefined,
+          { force: forceProbe },
+        );
         uiDone(ctx);
-        applyProbeOutcomes(state, results);
+        applyProbeOutcomes(state, freshResults);
 
         const ok = results.filter((r) => r.status === "ok");
         const errs = results.filter((r) => r.status === "error");
@@ -1129,7 +1111,7 @@ export function createCommandRouter(
         const skipped = results.filter((r) => r.status === "skipped");
 
         const lines = [
-          `--- probe results (${results.length} models) ---`,
+          `--- probe results (${results.length} models, ${cached} cached) ---`,
           `  ok:      ${ok.length}`,
           `  error:   ${errs.length}`,
           `  timeout: ${timeouts.length}`,
@@ -1204,17 +1186,14 @@ export function createCommandRouter(
 
     // Cache
     exact("cache stats", "Show classification cache", (_, ctx) => {
-      const path = cachePath(process.cwd(), state.config.cache?.path);
-      const entries = loadCache(path);
       log(
         ctx,
-        `cache: ${entries.length} entries (cap ${state.config.cache?.maxEntries ?? DEFAULT_MAX_ENTRIES}, threshold ${state.config.cache?.threshold ?? DEFAULT_THRESHOLD})`,
+        `cache: ${state.cacheEntries.length} entries (cap ${state.config.cache?.maxEntries ?? DEFAULT_MAX_ENTRIES}, threshold ${state.config.cache?.threshold ?? DEFAULT_THRESHOLD})`,
       );
     }),
     exact("cache clear", "Clear classification cache", (_, ctx) => {
-      const path = cachePath(process.cwd(), state.config.cache?.path);
-      saveCache(path, []);
       state.cacheEntries = [];
+      state.scheduleCacheSave();
       state.invalidatePipeline();
       log(ctx, "cache cleared");
     }),

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   updateCache,
   cachePath,
   loadCache,
+  createDeferredCacheWriter,
 } from "../cache.ts";
 
 describe("cache", () => {
@@ -152,6 +153,27 @@ describe("cache", () => {
 
     it("joins relative path to cwd", () => {
       assert.equal(cachePath("/project", "cache.jsonl"), join("/project", "cache.jsonl"));
+    });
+  });
+
+  describe("deferred writer", () => {
+    it("coalesces schedules and flushes the latest cache state", async () => {
+      const cwd = mkdtempSync(join(tmpdir(), "bifrost-cache-writer-"));
+      const path = join(cwd, ".pi", "cache.jsonl");
+      let entries = updateCache([], "first", "quick", 10);
+      const writer = createDeferredCacheWriter(path, () => entries);
+      try {
+        writer.schedule();
+        entries = updateCache(entries, "second", "frontier", 10);
+        writer.schedule();
+        await writer.flush();
+        const saved = readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+        assert.equal(saved.length, 2);
+        assert.equal(saved[1].normalized, "second");
+        assert.equal("tokens" in saved[0], false);
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
     });
   });
 

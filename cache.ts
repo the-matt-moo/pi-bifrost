@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { resolveStoragePath, readTextFile, writeTextFile } from "./storage.ts";
 
 export interface CacheEntry {
@@ -35,8 +37,30 @@ export function normalize(text: string): string {
     .join(" ");
 }
 
-function tokenSet(text: string): Set<string> {
-  return new Set(normalize(text).split(" "));
+function normalizedTokenSet(text: string): Set<string> {
+  return new Set(text.split(" ").filter(Boolean));
+}
+
+interface CacheLookupIndex {
+  exact: Map<string, CacheEntry>;
+  tokens: Map<CacheEntry, Set<string>>;
+}
+
+const lookupIndexes = new WeakMap<CacheEntry[], CacheLookupIndex>();
+
+function lookupIndex(entries: CacheEntry[]): CacheLookupIndex {
+  let index = lookupIndexes.get(entries);
+  if (index) return index;
+  const exact = new Map<string, CacheEntry>();
+  for (const entry of entries) {
+    if (!exact.has(entry.normalized)) exact.set(entry.normalized, entry);
+  }
+  index = {
+    exact,
+    tokens: new Map(entries.map((entry) => [entry, normalizedTokenSet(entry.normalized)])),
+  };
+  lookupIndexes.set(entries, index);
+  return index;
 }
 
 export function loadCache(path: string): CacheEntry[] {
@@ -66,13 +90,95 @@ export function loadCache(path: string): CacheEntry[] {
   }
 }
 
+function serializeCache(entries: CacheEntry[]): string {
+  const lines = entries.map((entry) => JSON.stringify(entry)).join("\n");
+  return lines ? lines + "\n" : "";
+}
+
 export function saveCache(path: string, entries: CacheEntry[]) {
   try {
-    const lines = entries.map((e) => JSON.stringify(e)).join("\n");
-    writeTextFile(path, lines ? lines + "\n" : "");
+    writeTextFile(path, serializeCache(entries));
   } catch (err) {
     console.error(`[bifrost] failed to save cache: ${err}`);
   }
+}
+
+async function saveCacheAsync(path: string, entries: CacheEntry[]): Promise<boolean> {
+  const text = serializeCache(entries);
+  try {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, text, "utf-8");
+    return true;
+  } catch (err) {
+    console.error(`[bifrost] failed to save cache: ${err}`);
+    return false;
+  }
+}
+
+export interface DeferredCacheWriter {
+  schedule(): void;
+  flush(): Promise<void>;
+  flushSync(): void;
+}
+
+/** Coalesces cache mutations and keeps synchronous I/O off prompt routing. */
+export function createDeferredCacheWriter(
+  path: string,
+  getEntries: () => CacheEntry[],
+): DeferredCacheWriter {
+  let scheduled: NodeJS.Immediate | undefined;
+  let generation = 0;
+  let queuedGeneration = 0;
+  let persistedGeneration = 0;
+  let writes = Promise.resolve();
+
+  const enqueue = () => {
+    if (queuedGeneration >= generation) return writes;
+    const target = generation;
+    const entries = [...getEntries()];
+    queuedGeneration = target;
+    writes = writes.then(async () => {
+      if (await saveCacheAsync(path, entries)) {
+        persistedGeneration = Math.max(persistedGeneration, target);
+      }
+    });
+    return writes;
+  };
+
+  const schedule = () => {
+    generation++;
+    if (scheduled) return;
+    scheduled = setImmediate(() => {
+      scheduled = undefined;
+      void enqueue();
+    });
+    scheduled.unref?.();
+  };
+
+  return {
+    schedule,
+    async flush() {
+      if (scheduled) {
+        clearImmediate(scheduled);
+        scheduled = undefined;
+      }
+      while (persistedGeneration < generation) {
+        const target = generation;
+        await enqueue();
+        if (persistedGeneration < target) return;
+      }
+    },
+    flushSync() {
+      if (scheduled) {
+        clearImmediate(scheduled);
+        scheduled = undefined;
+      }
+      if (persistedGeneration >= generation) return;
+      saveCache(path, getEntries());
+      persistedGeneration = generation;
+      queuedGeneration = generation;
+    },
+  };
 }
 
 function evictIfNeeded(entries: CacheEntry[], maxEntries: number): CacheEntry[] {
@@ -90,13 +196,15 @@ export function lookupCache(
   threshold: number,
 ): CacheEntry | undefined {
   const normalized = normalize(prompt);
-  const promptTokens = tokenSet(normalized);
+  const index = lookupIndex(entries);
+  const exact = index.exact.get(normalized);
+  if (exact) return exact;
+
+  const promptTokens = normalizedTokenSet(normalized);
   let best: { entry: CacheEntry; score: number } | undefined;
 
   for (const entry of entries) {
-    if (entry.normalized === normalized) return entry;
-
-    const entryTokens = tokenSet(entry.normalized);
+    const entryTokens = index.tokens.get(entry)!;
     if (promptTokens.size === 0 || entryTokens.size === 0) continue;
 
     let intersection = 0;

@@ -5,6 +5,7 @@ import {
   setBifrostWorkingMessage,
   setBifrostModeStatus,
   shouldRefreshRegistry,
+  refreshRegistry,
   type RegistryRefreshState,
 } from "../ux-status.ts";
 
@@ -106,5 +107,28 @@ describe("ux status helpers", () => {
       forceRegistryRefresh: true,
     };
     assert.equal(shouldRefreshRegistry(state, 21_000, 30_000), true);
+  });
+
+  it("deduplicates concurrent registry refreshes", async () => {
+    const state: RegistryRefreshState = { forceRegistryRefresh: true };
+    let calls = 0;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const first = refreshRegistry(state, async () => { calls++; await pending; });
+    const second = refreshRegistry(state, async () => { calls++; });
+    assert.equal(first, second);
+    assert.equal(calls, 1);
+    release();
+    assert.equal(await first, true);
+    assert.equal(state.forceRegistryRefresh, false);
+    assert.equal(state.registryRefreshInflight, undefined);
+  });
+
+  it("keeps stale registry state after refresh failure", async () => {
+    const state: RegistryRefreshState = { lastRegistryRefreshAt: 100, forceRegistryRefresh: true };
+    const ok = await refreshRegistry(state, async () => { throw new Error("offline"); }, undefined, () => 200);
+    assert.equal(ok, false);
+    assert.equal(state.lastRegistryRefreshAt, 100);
+    assert.equal(state.forceRegistryRefresh, true);
   });
 });

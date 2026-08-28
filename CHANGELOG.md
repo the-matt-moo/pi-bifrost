@@ -2,6 +2,22 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.4.0
+
+### Added
+- Classifier performance controls: `timeoutMs` (10 seconds), `maxAttempts` (2), and `cooldownSeconds` (60) bound failure latency and temporarily skip unhealthy classifier models.
+- Successful model probes are cached per model for one hour. `/bifrost probe`, `init`, `update`, and `refresh` accept `--force` to bypass cached probe results.
+
+### Changed
+- Prompt routing now refreshes Pi's model registry with stale-while-revalidate. Existing registry data routes immediately; empty or explicitly invalidated registries still wait for recovery.
+- Classifier `auto` mode only uses the subprocess when direct transport is unavailable. Completed invalid direct responses are no longer resent, reducing failure-path tokens and latency.
+- Classification cache lookups reuse an in-memory exact/token index. Cache writes are deferred and coalesced with a synchronous exit flush instead of blocking prompt routing.
+- Routing reuses diagnosed candidates rather than scanning the model registry twice.
+- Empty quota telemetry now respects refresh backoff instead of retrying on every prompt.
+
+### Fixed
+- Anthropic quota requests now use the same four-second timeout as other quota providers, preventing a stalled request from wedging future refreshes.
+
 ## 4.3.2
 
 ### Fixed

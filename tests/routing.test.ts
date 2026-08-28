@@ -241,6 +241,22 @@ describe("routing", () => {
     });
   });
 
+  it("reuses pre-resolved candidates without rescanning registry", () => {
+    const candidate = makeModel("anthropic", "claude-sonnet", 3);
+    const ctx = {
+      modelRegistry: {
+        getAvailable: () => { throw new Error("unexpected registry scan"); },
+      },
+    } as never;
+    const result = resolveModelWithFallback(ctx, {
+      requestedTier: "general",
+      requestedPattern: "anthropic/claude-sonnet",
+      requestedCandidates: [candidate],
+      requestedStrategy: "first",
+    });
+    assert.equal(result.selected, candidate);
+  });
+
   describe("getStrategy", () => {
     it("returns category strategy if set", () => {
       const categoryStrategies = { economical: "cheapest" as const };

@@ -123,6 +123,68 @@ describe("classification-pipeline", () => {
       await p.classify("hello");
       assert.equal(called, false);
     });
+
+    it("caps classifier model attempts", async () => {
+      let calls = 0;
+      const p = createPipeline(deps({
+        classifierModels: [makeClassifierModel("a", "m1"), makeClassifierModel("b", "m2")],
+        classifierMaxAttempts: 1,
+        classifyWithLLM: async () => { calls++; return undefined; },
+        defaultTier: "economical",
+      }));
+      const result = await p.classify("ambiguous request");
+      assert.equal(calls, 1);
+      assert.equal(result.kind, "fallback");
+    });
+
+    it("shares classifier cooldowns across pipeline rebuilds", async () => {
+      const cooldowns = new Map<string, number>();
+      let now = 1_000;
+      const models = [makeClassifierModel("a", "m1"), makeClassifierModel("b", "m2")];
+      const first = createPipeline(deps({
+        classifierModels: models,
+        classifierMaxAttempts: 1,
+        classifierCooldowns: cooldowns,
+        classifierCooldownMs: 100,
+        now: () => now,
+        classifyWithLLM: async () => undefined,
+      }));
+      await first.classify("ambiguous request");
+      assert.equal(cooldowns.get("a/m1"), 1_100);
+
+      const calls: string[] = [];
+      const rebuilt = createPipeline(deps({
+        classifierModels: models,
+        classifierMaxAttempts: 1,
+        classifierCooldowns: cooldowns,
+        now: () => now,
+        classifyWithLLM: async (model) => {
+          calls.push(model.kind === "registry" ? model.model.id : model.id);
+          return "frontier";
+        },
+      }));
+      const result = await rebuilt.classify("another ambiguous request");
+      assert.deepEqual(calls, ["m2"]);
+      assert.equal(result.kind, "classified");
+
+      now = 1_101;
+      assert.ok(now > (cooldowns.get("a/m1") ?? 0));
+    });
+
+    it("aborts classification after the total timeout", async () => {
+      let aborted = false;
+      const p = createPipeline(deps({
+        classifierModels: [makeClassifierModel("a", "m1")],
+        classifierTimeoutMs: 5,
+        defaultTier: "economical",
+        classifyWithLLM: async (_model, _text, _tiers, signal) => new Promise((resolve) => {
+          signal?.addEventListener("abort", () => { aborted = true; resolve(undefined); }, { once: true });
+        }),
+      }));
+      const result = await p.classify("ambiguous request");
+      assert.equal(aborted, true);
+      assert.equal(result.kind, "fallback");
+    });
   });
 
   describe("regex", () => {

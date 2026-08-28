@@ -52,6 +52,7 @@ export interface ClassifierOptions {
   temperature?: number;
   method?: "direct" | "subprocess" | "auto";
   tierDescriptions?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 export function categoryLabel(category: string): string {
@@ -92,63 +93,77 @@ function piCommand(): { command: string; args: string[] } {
   return { command: "pi", args: [] };
 }
 
+interface DirectClassification {
+  result?: string;
+  /** True once a provider/endpoint accepted a direct attempt. */
+  attempted: boolean;
+}
+
 async function classifyWithDirectHttp(
   ctx: ExtensionContext,
   classifierModel: ClassifierModel,
   categories: readonly string[],
   prompt: string,
   options: ClassifierOptions = {},
-): Promise<string | undefined> {
+): Promise<DirectClassification> {
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
   const maxTokens = options.maxTokens ?? 20;
   const temperature = options.temperature ?? 0;
   const userPrompt = classificationPrompt(categories, prompt, options.tierDescriptions);
 
   if (classifierModel.kind === "registry") {
-    const provider = ctx.modelRegistry.getProvider(classifierModel.model.provider);
-    if (!provider) return undefined;
-    const auth = await ctx.modelRegistry.getProviderAuth(classifierModel.model.provider);
-    if (!auth) return undefined;
+    try {
+      const provider = ctx.modelRegistry.getProvider(classifierModel.model.provider);
+      if (!provider) return { attempted: false };
+      const auth = await ctx.modelRegistry.getProviderAuth(classifierModel.model.provider);
+      if (!auth) return { attempted: false };
 
-    const stream = provider.streamSimple(
-      classifierModel.model,
-      {
-        systemPrompt,
-        messages: [{ role: "user", content: userPrompt, timestamp: Date.now() }],
-      },
-      {
-        maxTokens,
-        temperature,
-        signal: ctx.signal,
-        cacheRetention: "none",
-        apiKey: auth.auth.apiKey,
-        headers: auth.auth.headers,
-        env: auth.env,
-      },
-    );
-    const response = await stream.result();
-    const content = response.content
-      .filter((c: { type: string; text?: string }): c is { type: "text"; text: string } => c.type === "text")
-      .map((c: { text: string }) => c.text)
-      .join("\n")
-      .trim();
+      const stream = provider.streamSimple(
+        classifierModel.model,
+        {
+          systemPrompt,
+          messages: [{ role: "user", content: userPrompt, timestamp: Date.now() }],
+        },
+        {
+          maxTokens,
+          temperature,
+          signal: options.signal ?? ctx.signal,
+          cacheRetention: "none",
+          apiKey: auth.auth.apiKey,
+          headers: auth.auth.headers,
+          env: auth.env,
+        },
+      );
+      try {
+        const response = await stream.result();
+        const content = response.content
+          .filter((c: { type: string; text?: string }): c is { type: "text"; text: string } => c.type === "text")
+          .map((c: { text: string }) => c.text)
+          .join("\n")
+          .trim();
 
-    if (!content) {
-      debug("classifier", "registry.empty_response", { model: classifierId(classifierModel) });
-      return undefined;
+        if (!content) {
+          debug("classifier", "registry.empty_response", { model: classifierId(classifierModel) });
+          return { attempted: true };
+        }
+
+        const result = extractCategory(content, categories);
+        debug("classifier", "registry.done", {
+          model: classifierId(classifierModel),
+          raw: content.slice(0, 100),
+          tier: result,
+        });
+        return { attempted: true, result };
+      } catch {
+        return { attempted: true };
+      }
+    } catch {
+      return { attempted: false };
     }
-
-    const result = extractCategory(content, categories);
-    debug("classifier", "registry.done", {
-      model: classifierId(classifierModel),
-      raw: content.slice(0, 100),
-      tier: result,
-    });
-    return result;
   }
 
   if (!isOpenAiCompatibleEndpoint(classifierModel)) {
-    return undefined;
+    return { attempted: false };
   }
 
   const body = {
@@ -171,16 +186,14 @@ async function classifyWithDirectHttp(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
-      signal: ctx.signal ?? (typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
-        ? AbortSignal.timeout(30_000)
-        : void 0),
+      signal: options.signal ?? ctx.signal ?? AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) {
       console.error(
         `[bifrost] classifier HTTP ${response.status} from ${classifierBaseUrl(classifierModel)}`,
       );
-      return undefined;
+      return { attempted: true };
     }
 
     const data = (await response.json()) as {
@@ -189,7 +202,7 @@ async function classifyWithDirectHttp(
     const content = data.choices?.[0]?.message?.content?.trim();
     if (!content) {
       debug("classifier", "http.empty_response", { url: classifierBaseUrl(classifierModel) });
-      return undefined;
+      return { attempted: true };
     }
 
     const result = extractCategory(content, categories);
@@ -198,9 +211,9 @@ async function classifyWithDirectHttp(
       raw: content.slice(0, 100),
       tier: result,
     });
-    return result;
+    return { attempted: true, result };
   } catch {
-    return undefined;
+    return { attempted: true };
   }
 }
 
@@ -250,6 +263,23 @@ async function classifyWithSubprocess(
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const finish = (result: string | undefined) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", abort);
+      resolve(result);
+    };
+    const abort = () => {
+      child.kill("SIGTERM");
+      finish(undefined);
+    };
+    const timer = setTimeout(() => {
+      console.error(`[bifrost] classifier subprocess timed out`);
+      abort();
+    }, 30_000);
+
     const MAX_CHUNK = 2000;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -259,21 +289,16 @@ async function classifyWithSubprocess(
     child.stderr.on("data", (chunk: string) => {
       if (stderr.length < MAX_CHUNK) stderr += chunk;
     });
-
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      console.error(`[bifrost] classifier subprocess timed out`);
-      resolve(undefined);
-    }, 30_000);
+    options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) abort();
 
     child.on("error", (err: Error) => {
-      clearTimeout(timer);
       console.error(`[bifrost] classifier subprocess error: ${err}`);
-      resolve(undefined);
+      finish(undefined);
     });
 
     child.on("close", (code: number | null) => {
-      clearTimeout(timer);
+      if (settled) return;
       if (code !== 0) {
         const modelId = `${model.provider}/${model.id}`;
         const diagnostic = parseClassifierStderr(stderr, modelId, code);
@@ -284,7 +309,7 @@ async function classifyWithSubprocess(
           stderr: stderr.slice(0, 200),
         });
         console.error(`[bifrost] ${formatDiagnostic(diagnostic)}`);
-        resolve(undefined);
+        finish(undefined);
         return;
       }
       const result = extractCategory(stdout, categories);
@@ -293,7 +318,7 @@ async function classifyWithSubprocess(
         raw: stdout.trim().slice(0, 100),
         tier: result,
       });
-      resolve(result);
+      finish(result);
     });
   });
 }
@@ -315,7 +340,9 @@ export async function classifyWithLLM(
       prompt,
       options,
     );
-    if (direct) return direct;
+    if (direct.result) return direct.result;
+    // A completed direct request must not be repeated through a subprocess.
+    if (direct.attempted) return undefined;
   }
 
   if (method === "subprocess" || method === "auto") {

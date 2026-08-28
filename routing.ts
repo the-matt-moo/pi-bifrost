@@ -383,8 +383,9 @@ export function resolveHealthyModel(
   now = Date.now(),
   quota?: QuotaSnapshot,
   quotaConfig?: QuotaRoutingConfig,
+  resolvedCandidates?: readonly Model<Api>[],
 ): HealthyModelResolution {
-  const candidates = findCandidates(ctx, pattern);
+  const candidates = resolvedCandidates ? [...resolvedCandidates] : findCandidates(ctx, pattern);
   if (!reliabilityState || reliabilityConfig?.enabled === false) {
     return {
       selected: selectModel(candidates, strategy, quota, quotaConfig, now),
@@ -426,6 +427,8 @@ export function resolveModelWithFallback(
     reliabilityConfig?: ReliabilityConfig;
     quota?: QuotaSnapshot;
     quotaConfig?: QuotaRoutingConfig;
+    requestedCandidates?: readonly Model<Api>[];
+    defaultCandidates?: readonly Model<Api>[];
     now?: number;
   },
 ): RoutedModelResolution {
@@ -439,6 +442,7 @@ export function resolveModelWithFallback(
     now,
     options.quota,
     options.quotaConfig,
+    options.requestedCandidates,
   );
   if (primary.selected) {
     return {
@@ -484,6 +488,7 @@ export function resolveModelWithFallback(
     now,
     options.quota,
     options.quotaConfig,
+    options.defaultCandidates,
   );
 
   return {

@@ -77,6 +77,15 @@ describe("validateConfig", () => {
     assert.ok(warnings[0].message.includes('should be > 0'));
   });
 
+  it("errors on invalid classifier performance limits", () => {
+    const issues = validateConfig({
+      ...baseConfig,
+      classifier: { model: "test/model", timeoutMs: 0, maxAttempts: 0, cooldownSeconds: -1 },
+    });
+    const errors = issues.filter((issue) => issue.severity === "error");
+    assert.equal(errors.length, 3);
+  });
+
   it("errors on invalid regex in rules", () => {
     const issues = validateConfig({
       ...baseConfig,

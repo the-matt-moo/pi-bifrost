@@ -36,7 +36,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Classification pipeline | 4-stage waterfall (cache→LLM→regex→default) | 7-stage adaptive pipeline: regex pre-check → cache → session momentum → complexity heuristic → parallel LLM+regex → default |
 | Classifier accuracy | Tier names only in LLM prompt | Auto-generated tier descriptions from regex rules injected into classifier prompt |
 | Multi-turn routing | Each prompt classified independently | Session momentum: 2+ same-tier classifications carry forward; topic-change detection resets momentum |
-| Routing latency | Sequential: cache miss → LLM → regex | Parallel: LLM classifier and regex execute concurrently; complexity heuristic skips LLM for obvious cases |
+| Routing latency | Sequential: cache miss → LLM → regex | Stale-while-revalidate registry updates, bounded classifier attempts, failure cooldowns, indexed cache lookup, and complexity short-circuits keep prompt routing off slow maintenance paths |
 | Self-correction | Static cache, no feedback | Demotion tracking on manual overrides; cache entries auto-escalate tier after 3 demotions |
 | Cold start | Empty cache → every prompt hits LLM | Cache warm-start seeds entries from regex rules on first use |
 
@@ -52,11 +52,11 @@ The improved pipeline addresses each of these gaps:
 
 3. **Tier descriptions** tell the classifier LLM what each tier actually handles (auto-generated from your regex rules), instead of just sending bare tier names. This improves accuracy for ambiguous prompts.
 
-4. **Parallel execution** runs the LLM classifier and regex rules concurrently instead of sequentially, saving 200-500ms per cache-miss prompt.
+4. **Bounded classification** limits classifier attempts to a shared wall-clock budget. Failed classifier models enter a short cooldown, and `auto` mode does not resend completed invalid direct responses through a subprocess.
 
 5. **Self-correction** tracks when you manually override a routing decision. After 3 such signals on the same prompt pattern, the cache entry's tier auto-escalates.
 
-6. **Warm start** pre-seeds the cache from your regex rules on first use, so common patterns route instantly without waiting for the LLM classifier.
+6. **Warm start and indexed lookup** pre-seed common patterns and keep exact/fuzzy cache lookup allocation low. Cache writes are deferred and coalesced so disk I/O does not block prompt routing.
 
 ## Statusline
 
@@ -144,7 +144,7 @@ Run once after install:
 /bifrost init
 ```
 
-This probes every model you have access to, finds which ones respond, and writes a config. Bifrost routes prompts from that point forward. If a selected model ends with a provider error, Bifrost opens its circuit immediately so the next prompt uses the next healthy model in that category. It never automatically replays a failed prompt.
+This probes every model you have access to, finds which ones respond, and writes a config. Successful probe results are reused for one hour; pass `--force` to retest immediately. Bifrost routes prompts from that point forward. If a selected model ends with a provider error, Bifrost opens its circuit immediately; replay-safe rate-limit failures can automatically retry on the next healthy model.
 
 If `/bifrost init` has not been run, Bifrost auto-derives tier candidates at runtime from the live registry using `guessTier`. This works but skips probe-based ordering and quota preferences. Run `/bifrost init` for stable, reproducible routing.
 
@@ -162,13 +162,14 @@ Narrow discovery scope when needed:
 | Command | What it does |
 |---------|-------------|
 | `/bifrost` | Dashboard with mode, model, and quick actions |
-| `/bifrost init` | Probe models and generate config (shows tier breakdown, errors, and model list before writing) |
+| `/bifrost init [--force]` | Probe models and generate config; fresh successful probes are reused for one hour unless forced |
 | `/bifrost on` / `off` | Enable or disable routing |
 | `/bifrost pin` / `unpin` | Lock current model for this session (see `keys` config for shortcuts) |
 | `/bifrost silence` / `unsilence` | Suppress or restore console output |
 | `/bifrost preview <prompt>` | See model routing, thinking level, and concise reasons without sending |
 | `/bifrost reload` | Reload config after manual edits |
-| `/bifrost refresh` | Add newly scoped models and drop models no longer in scope, without recategorizing existing tiers (auto-reloads on change) |
+| `/bifrost refresh [--free] [--force]` | Reconcile scoped models without recategorizing tiers; force bypasses fresh probe results |
+| `/bifrost probe [--scoped] [--free] [--force]` | Check model availability; reuse fresh successes unless forced |
 | `/bifrost doctor` | Validate config against available models |
 | `/bifrost classifier on` / `off` | Toggle LLM classifier |
 | `/bifrost thinking [off\|advisory\|apply\|status]` | Inspect or set prompt-derived thinking mode |
@@ -206,14 +207,16 @@ Once models are categorized, the configured `strategy` determines which model is
 - `subscription_balance` — evaluates weekly quota telemetry for subscription providers (Anthropic, Codex, Antigravity). When providers differ by more than 10 percentage points of weekly allowance remaining, it favors the provider with more remaining quota; within 10 points, it retains normal list order. It suppresses paid OpenRouter credits while measured subscription allowance remains above `reservePercent`.
 
 ### 3. Dynamic Pipeline: Prompt Routing
-For every prompt, Bifrost executes a 7-stage evaluation:
+For every prompt, Bifrost executes a staged evaluation:
 1. **Inline Overrides**: E.g., `frontier debug this`.
-2. **Complexity Heuristic**: Short-circuits the LLM classifier for obvious cases. Text exceeding size thresholds bypasses LLM straight to `frontier`. Short 3-word commands go to `quick`.
-3. **Session Momentum**: 2+ consecutive classifications in the same tier carry forward to ambiguous follow-ups, preventing tier-thrashing during deep debugging. Topic-change detection resets this momentum.
-4. **Cache & Warm Start**: Fuzzy matching reuses recent successful classifications. The cache is pre-seeded by regex rules.
-5. **LLM Classifier**: Analyzes the prompt against auto-generated tier descriptions built from your rules.
-6. **Regex Rules (`DEFAULT_RULES`)**: Concurrently evaluated against the prompt (e.g., `\b(unit tests?|refactor)\b` → `general`, `\b(race condition|deadlock|security audit)\b` → `frontier`).
-7. **Default Tier**: If all else fails, falls back to the configured default.
+2. **Direct-model Regex Rules**: Explicit provider/model rules bypass tier classification.
+3. **Cache & Session Momentum**: Indexed fuzzy matching reuses successful classifications; related follow-ups retain the dominant recent tier.
+4. **Complexity Heuristic**: Obvious short requests route to `quick`; large or multi-file requests route to `frontier` without an LLM call.
+5. **Bounded LLM Classifier**: Attempts at most two healthy classifier models within a 10-second total budget by default. Failed models cool down for 60 seconds.
+6. **Tier Regex Rules**: The already-computed regex result is used when classification does not return a valid tier.
+7. **Default Tier**: If all else fails, Bifrost uses the configured default.
+
+Registry refreshes use stale-while-revalidate: existing models route the current prompt immediately while refresh runs in the background. An empty registry or explicit recovery still waits for fresh data. Quota telemetry also backs off after empty results and degrades to neutral routing.
 
 ### 4. Thinking Mode Steering
 If `"thinking": { "mode": "apply" }` is set in config, Bifrost assesses prompt complexity to dynamically steer the selected model's **thinking level/effort**.
@@ -254,6 +257,19 @@ Shortcuts are machine-local and unbound by default — Pi's extension API takes 
 ```
 
 Manual model selection already pins Bifrost, so a separate `pin` key is usually unnecessary. Pick keys the host does not reserve (`shift+tab`, `ctrl+c/d/l/o/t`, and the model-cycle keys are reserved). Reserved keys are skipped with a startup diagnostic.
+
+Classifier latency controls are optional and backward-compatible:
+
+```json
+{
+  "classifier": {
+    "model": "openai-codex/gpt-5.4-mini",
+    "timeoutMs": 10000,
+    "maxAttempts": 2,
+    "cooldownSeconds": 60
+  }
+}
+```
 
 Prompt-derived thinking is disabled by default. Set `"thinking": { "mode": "advisory" }` to log recommendations without changing Pi's level, or use `"mode": "apply"` to opt into automatic level changes. Manual thinking-level changes pin the feature for the session. See the [full config reference](docs/) and [examples/](examples/) for advanced options including routing rules, classifier setup, reliability tuning, and quota-aware routing.
 
