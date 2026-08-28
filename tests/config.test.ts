@@ -127,6 +127,16 @@ describe("validateConfig", () => {
     assert.ok(errors[0].message.includes("integer"));
   });
 
+  it("errors on invalid auto-retry limit", () => {
+    const issues = validateConfig({
+      ...baseConfig,
+      reliability: { maxAutoRetries: 1.5 },
+    });
+    const errors = issues.filter((i) => i.severity === "error");
+    assert.equal(errors.length, 1);
+    assert.ok(errors[0].message.includes("maxAutoRetries"));
+  });
+
   it("allows multiple issues", () => {
     const issues = validateConfig({
       models: {},

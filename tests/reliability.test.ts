@@ -7,6 +7,7 @@ import {
   DEFAULT_RELIABILITY,
   emptyReliabilityState,
   getCircuitState,
+  isRetryableProviderLimit,
   loadReliability,
   recordModelFailure,
   recordModelSuccess,
@@ -16,6 +17,18 @@ import {
 } from "../reliability.ts";
 
 describe("reliability", () => {
+  it("recognizes provider-side limit rejections safe for bounded retry", () => {
+    for (const reason of [
+      "429: temporarily rate-limited upstream",
+      "ResourceExhausted: Worker local total request limit reached",
+      "Quota reached. Please wait 3h",
+      "This request would exceed your account's rate limit",
+    ]) {
+      assert.equal(isRetryableProviderLimit(reason), true, reason);
+    }
+    assert.equal(isRetryableProviderLimit("500: provider failed after partial output"), false);
+  });
+
   it("opens circuit after threshold failures within window", () => {
     const cfg = {
       ...DEFAULT_RELIABILITY,

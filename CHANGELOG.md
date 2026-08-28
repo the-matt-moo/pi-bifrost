@@ -10,12 +10,12 @@ All notable changes to pi-bifrost are documented here.
 ## 4.3.1
 
 ### Added
-- Companion extension `auto-model-fallback.ts`: automatic model switching on usage-limit, rate-limit, quota-exceeded, and `ResourceExhausted` errors. Detects limit errors on `turn_end`, marks the exhausted model, and calls `pi.setModel()` to switch to the next enabled model (same provider first, then any other category). Works alongside Bifrost's circuit-breaker -- the exhausted model is also circuit-opened via `agent_settled` so subsequent Bifrost routing skips it.
-- Companion extension `lmstudio-tps.ts`: tokens-per-second metric now exposed via `getStatus()` for footer integration (e.g. `56.4 t/s (310 tokens in 5.50s)`).
-- Footer model line in `model-usage-status.ts` now appends live t/s metrics from `lmstudio-tps` after the context usage display.
-
-### Fixed
-- `lmstudio-tps.ts`: removed `console.log` that leaked `[tps]` debug lines into the user prompt area.
+- **Auto-retry on rate limits**: when a provider returns a 429 / `ResourceExhausted` / rate-limit error and the failed turn produced no assistant output or tool results (replay-safe), Bifrost automatically switches to the next healthy model in the same tier and resubmits the original prompt via `pi.sendUserMessage({ deliverAs: "followUp" })`. No user action required.
+- `reliability.autoRetry` config flag (default `true`) and `reliability.maxAutoRetries` (default `2`) to tune or disable the behaviour.
+- `isRetryableProviderLimit()` helper in `reliability.ts` matches 429, `ResourceExhausted`, `rate-limit`, `quota exceeded/reached/exhausted`, `usage limit`, and `request limit reached` patterns.
+- `RuntimeRetryContext` on `RuntimeReliabilityTracker`: tracks the original prompt, attached images, tier, and auto-retry count across Pi's internal retry chain so the settled handler can replay the request.
+- `noteToolResults()` on `RuntimeReliabilityTracker`: records whether any tool calls completed during the turn; used together with assistant-output detection to determine replay safety.
+- `config.ts` validation: `maxAutoRetries` must be an integer >= 0.
 
 ## 4.3.0
 

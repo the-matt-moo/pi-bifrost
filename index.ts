@@ -35,6 +35,7 @@ import {
 } from "./routing.js";
 import { QuotaStore } from "./quota.js";
 import { ReliabilityStore } from "./reliability-store.js";
+import { isRetryableProviderLimit } from "./reliability.js";
 import { loadRuntimeState, runtimeStatePath, saveRuntimeState } from "./runtime-state.js";
 import { createCommandRouter, getBifrostCommandCompletions, log, logOverwrite, uiBusy, uiDone, setBifrostSilent, syncBifrostModeStatus, clearBifrostWidgets, formatBifrostRouting, type BifrostState } from "./commands.js";
 import { setupDebug, debug, debugMeasure } from "./debug.js";
@@ -233,6 +234,20 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     forceRegistryRefresh: false,
   };
 
+  function inferPattern(ctx: ExtensionContext, tier: string): string[] {
+    const raw = state.config.models?.[tier];
+    if (raw && (!Array.isArray(raw) || raw.length > 0)) {
+      return scopedCandidates(ctx, raw).map(modelKey);
+    }
+    // Unconfigured tiers may derive candidates only from Pi's scoped-model selection.
+    // "writing" has no guessTier class; alias to "general" for candidate lookup.
+    const inferredTier = tier === "writing" ? "general" : tier;
+    return ctx.scopedModels
+      .map(({ model }) => model)
+      .filter((model) => guessTier(model) === inferredTier)
+      .map(modelKey);
+  }
+
   function decideThinking(
     prompt: string,
     selectedTier: string,
@@ -375,6 +390,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   });
 
   pi.on("turn_end", async (event) => {
+    runtimeReliability.noteToolResults(event.toolResults);
     const failed = event.toolResults.some((result) => result.isError === true);
     const errored = (event.message as { stopReason?: unknown })?.stopReason === "error";
     thinkingSession.noteTurnOutcome(failed, errored);
@@ -387,11 +403,75 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     // Policy A: failure logged, clean settle silent (trial-only success).
     // Intentional — normal routing produces no log noise.
     state.reliabilityStore.recordSettled(settled.model, settled.reason);
-    if (settled.reason) {
-      const httpMatch = settled.reason.match(/\b([45]\d{2})\b/);
-      const detail = httpMatch ? `HTTP ${httpMatch[1]}; ` : "";
-      log(ctx, `Bifrost: provider failure for ${settled.model} (${detail}circuit opened); next prompt routes to the next healthy model in its category.`, "warning");
+    if (!settled.reason) return;
+
+    const httpMatch = settled.reason.match(/\b([45]\d{2})\b/);
+    const detail = httpMatch ? `HTTP ${httpMatch[1]}; ` : "";
+    const retry = settled.retry;
+    const autoRetry = state.config.reliability?.autoRetry ?? true;
+    const maxAutoRetries = state.config.reliability?.maxAutoRetries ?? 2;
+    if (
+      !autoRetry ||
+      state.pinned ||
+      !retry ||
+      !settled.replaySafe ||
+      !isRetryableProviderLimit(settled.reason) ||
+      retry.autoRetryCount >= maxAutoRetries
+    ) {
+      const why = isRetryableProviderLimit(settled.reason) && !settled.replaySafe
+        ? " automatic retry skipped because the failed turn produced output or tool results."
+        : " next prompt routes to the next healthy model in its tier.";
+      log(ctx, `Bifrost: provider failure for ${settled.model} (${detail}circuit opened);${why}`, "warning");
+      return;
     }
+
+    const tier = retry.tier;
+    const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
+    const defaultTier = state.config.default;
+    const resolved = resolveModelWithFallback(ctx, {
+      requestedTier: tier,
+      requestedPattern: inferPattern(ctx, tier),
+      requestedStrategy: strategy,
+      defaultTier,
+      defaultPattern: defaultTier ? inferPattern(ctx, defaultTier) : undefined,
+      defaultStrategy: defaultTier
+        ? getStrategy(state.config.categoryStrategies, state.config.strategy, defaultTier)
+        : strategy,
+      reliabilityState: state.reliabilityStore.getState(),
+      reliabilityConfig: state.config.reliability,
+      quota: quotaStore.getSnapshot(),
+      quotaConfig: state.config.quotaRouting,
+    });
+    const next = resolved.selected;
+    if (!next) {
+      log(ctx, `Bifrost: provider failure for ${settled.model} (${detail}circuit opened); no healthy retry model is available.`, "warning");
+      return;
+    }
+
+    const nextKey = modelKey(next);
+    selfSelecting = true;
+    let switched = false;
+    let switchError: unknown;
+    try {
+      switched = await pi.setModel(next);
+    } catch (err) {
+      switchError = err;
+    }
+    if (!switched) {
+      selfSelecting = false;
+      const diagnostic = parseSetModelError(switchError, nextKey);
+      state.reliabilityStore.recordFailure(nextKey, "setModel", diagnostic.message);
+      log(ctx, `Bifrost: retry model switch failed: ${formatDiagnostic(diagnostic)}`, "error");
+      return;
+    }
+
+    const nextRetry = { ...retry, autoRetryCount: retry.autoRetryCount + 1 };
+    runtimeReliability.begin(nextKey, nextRetry);
+    const replayContent = retry.images?.length
+      ? [...(retry.prompt ? [{ type: "text" as const, text: retry.prompt }] : []), ...retry.images]
+      : retry.prompt;
+    log(ctx, `Bifrost: ${settled.model} was rate-limited; auto-retrying on ${nextKey} (${nextRetry.autoRetryCount}/${maxAutoRetries}).`, "warning");
+    pi.sendUserMessage(replayContent, { deliverAs: "followUp" });
   });
 
   pi.on("thinking_level_select", async (event, ctx) => {
@@ -551,23 +631,10 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const source = classification.kind === "classified"
         ? classification.source
         : "fallback";
-      const inferPattern = (t: string): string[] => {
-        const raw = state.config.models?.[t];
-        if (raw && (!Array.isArray(raw) || raw.length > 0)) {
-          return scopedCandidates(ctx, raw).map(modelKey);
-        }
-        // Unconfigured tiers may derive candidates only from Pi's scoped-model selection.
-        // "writing" has no guessTier class; alias to "general" for candidate lookup.
-        const inferredTier = t === "writing" ? "general" : t;
-        return ctx.scopedModels
-          .map(({ model }) => model)
-          .filter((model) => guessTier(model) === inferredTier)
-          .map(modelKey);
-      };
-      const pattern = inferPattern(tier);
+      const pattern = inferPattern(ctx, tier);
       const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
       const defaultTier = state.config.default;
-      const defaultPattern = defaultTier ? inferPattern(defaultTier) : undefined;
+      const defaultPattern = defaultTier ? inferPattern(ctx, defaultTier) : undefined;
       const defaultStrategy = defaultTier
         ? getStrategy(state.config.categoryStrategies, state.config.strategy, defaultTier)
         : strategy;
@@ -595,6 +662,12 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       });
       const model = resolved.selected;
       const selectedTier = resolved.selectedTier ?? tier;
+      const retryContext = {
+        prompt: promptText,
+        images: event.images ? [...event.images] : undefined,
+        tier,
+        autoRetryCount: 0,
+      };
 
       // If selected model is half-open, mark trial in progress
       if (model) {
@@ -653,7 +726,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         log(ctx, formatBifrostRouting(tier, modelKey(model), `already active, ${source}${reason}`));
         debug("input", "model_unchanged", { model: modelKey(model), selectedTier, fallbackReason: resolved.fallbackReason, skipped: resolved.skipped.length, thinkingLevel: ctx.thinkingLevel });
         debug("input", "model_selected", { model: modelKey(model), tier: selectedTier, strategy, source, fallbackReason: resolved.fallbackReason, thinkingLevel: ctx.thinkingLevel, quota: summarizeQuota(quotaStore) });
-        runtimeReliability.begin(modelKey(model));
+        runtimeReliability.begin(modelKey(model), retryContext);
         endInput({ model: modelKey(model), tier: selectedTier, strategy, source, thinkingLevel: ctx.thinkingLevel });
         return defaultAction;
       }
@@ -696,7 +769,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         : formatBifrostRouting(tier, modelKey(model), `fallback${detail ? `; ${detail}` : ""}`);
       syncBifrostModeStatus(ctx, state);
       log(ctx, doneMsg);
-      runtimeReliability.begin(modelKey(model));
+      runtimeReliability.begin(modelKey(model), retryContext);
       debug("input", "model_selected", { model: modelKey(model), tier: selectedTier, strategy, source, fallbackReason: resolved.fallbackReason, thinkingLevel: ctx.thinkingLevel, quota: summarizeQuota(quotaStore) });
       endInput({ model: modelKey(model), tier: selectedTier, strategy, source, thinkingLevel: ctx.thinkingLevel });
       return defaultAction;
