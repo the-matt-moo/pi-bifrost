@@ -2,6 +2,12 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.4.1
+
+### Removed
+- Dead code: `session-fallback.ts`, `test-thinking.mjs`, `rule-learning.ts` (zero imports since v0.3.2).
+- Deprecated `findCachedCategory()` from cache module and its tests — replaced by explicit `lookupCache` + `touchCacheEntry`.
+
 ## 4.4.0
 
 ### Added

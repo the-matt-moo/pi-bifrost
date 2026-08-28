@@ -255,21 +255,6 @@ export function demoteCacheEntry(
   return false;
 }
 
-/** Convenience: pure lookup composed with LRU touch.
- * @deprecated Prefer explicit `lookupCache` + `touchCacheEntry` at call sites. */
-export function findCachedCategory(
-  entries: CacheEntry[],
-  prompt: string,
-  threshold: number,
-): string | undefined {
-  const entry = lookupCache(entries, prompt, threshold);
-  if (entry) {
-    touchCacheEntry(entry);
-    return entry.category;
-  }
-  return undefined;
-}
-
 export function updateCache(
   entries: CacheEntry[],
   prompt: string,

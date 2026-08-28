@@ -7,7 +7,6 @@ import {
   normalize,
   lookupCache,
   touchCacheEntry,
-  findCachedCategory,
   updateCache,
   cachePath,
   loadCache,
@@ -73,41 +72,6 @@ describe("cache", () => {
       touchCacheEntry(entry);
       assert.ok(entry.lastUsed > 100);
       assert.equal(entry.hits, 4);
-    });
-  });
-
-  describe("findCachedCategory", () => {
-    it("returns exact match", () => {
-      const entries = [
-        { normalized: "hello world", category: "economical", lastUsed: 1, hits: 0 },
-      ];
-      assert.equal(findCachedCategory(entries, "Hello World!", 0.85), "economical");
-    });
-
-    it("returns fuzzy match above threshold", () => {
-      const entries = [
-        { normalized: "hello world today is nice", category: "economical", lastUsed: 1, hits: 0 },
-      ];
-      assert.equal(
-        findCachedCategory(entries, "hello world today is good", 0.5),
-        "economical",
-      );
-    });
-
-    it("returns undefined when nothing matches", () => {
-      const entries = [
-        { normalized: "hello world", category: "economical", lastUsed: 1, hits: 0 },
-      ];
-      assert.equal(findCachedCategory(entries, "plan architecture", 0.85), undefined);
-    });
-
-    it("updates hits and lastUsed on match", () => {
-      const entries = [
-        { normalized: "hello", category: "economical", lastUsed: 1, hits: 1 },
-      ];
-      findCachedCategory(entries, "hello", 0.85);
-      assert.equal(entries[0].hits, 2);
-      assert.ok(entries[0].lastUsed > 1);
     });
   });
 
