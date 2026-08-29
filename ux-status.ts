@@ -122,17 +122,25 @@ function modeLabel(state: BifrostModeState): { tone: "warning" | "success"; text
   return { tone, text };
 }
 
-export function formatBifrostStatus(state: { enabled: boolean; pinned: boolean; silent: boolean; thinkingMode?: string; thinkingPinned?: boolean }): string {
-  const pin = state.pinned ? "\x1b[33mpinned\x1b[0m" : "\x1b[90munpinned\x1b[0m";
-  const sil = state.silent ? "\x1b[36msilence\x1b[0m" : "\x1b[32munsilence\x1b[0m";
-  const think = state.thinkingPinned
-    ? `\x1b[38;5;208mthink:pinned\x1b[0m`
-    : state.thinkingMode && state.thinkingMode !== "off" ? `\x1b[35mthink:${state.thinkingMode}\x1b[0m` : "";
-  const tilde = "\x1b[90m~\x1b[0m";
+export function formatBifrostStatus(state: { enabled: boolean; pinned: boolean; silent: boolean; thinkingMode?: string; thinkingPinned?: boolean }): string[] {
   const name = state.enabled
     ? "\x1b[31mb\x1b[38;5;208mi\x1b[33mf\x1b[32mr\x1b[34mo\x1b[38;5;93ms\x1b[35mt\x1b[0m"
     : "\x1b[90mbifrost\x1b[0m";
-  return `${name}\x1b[90m:\x1b[0m ${pin} ${tilde} ${sil}${think ? ` ${tilde} ${think}` : ""}`;
+  const bifrostLine = `${name}`;
+
+  const pinColor = state.enabled
+    ? (state.pinned ? "\x1b[38;5;208m" : "\x1b[32m")
+    : "\x1b[90m";
+  const pinLabel = `${pinColor}${state.pinned ? "pinned" : "unpinned"}\x1b[0m`;
+  const modelLine = `  \x1b[90mmodel:\x1b[0m${pinLabel}`;
+
+  const thinkColor = state.enabled
+    ? (state.thinkingPinned ? "\x1b[38;5;208m" : (state.thinkingMode && state.thinkingMode !== "off" ? "\x1b[35m" : "\x1b[90m"))
+    : "\x1b[90m";
+  const thinkLabel = `${thinkColor}${state.thinkingPinned ? "pinned" : (state.thinkingMode && state.thinkingMode !== "off" ? state.thinkingMode : "apply")}\x1b[0m`;
+  const thinkLine = `  \x1b[90mthink:\x1b[0m${thinkLabel}`;
+
+  return [bifrostLine, modelLine, thinkLine];
 }
 
 export function setBifrostModeStatus(ctx: ExtensionContext, state: BifrostModeState): void {
@@ -161,5 +169,8 @@ export function setBifrostModeStatus(ctx: ExtensionContext, state: BifrostModeSt
   const label = modeLabel(state);
   const text = statusText(ctx, label.tone, label.text);
   ctx.ui.setStatus("bifrost-state", text);
-  ctx.ui.setStatus("bifrost", formatBifrostStatus(state));
+  const bifrostLines = formatBifrostStatus(state);
+  ctx.ui.setStatus("bifrost", bifrostLines[0]);
+  ctx.ui.setStatus("bifrost-model", bifrostLines[1]);
+  ctx.ui.setStatus("bifrost-think", bifrostLines[2]);
 }

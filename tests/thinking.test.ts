@@ -132,6 +132,17 @@ describe("thinking", () => {
     });
   });
 
+  it("maximizes free-model thinking to the highest supported level", () => {
+    assert.deepEqual(clampToModel("minimal", {
+      reasoning: true,
+      thinkingLevelMap: { max: null, xhigh: null, high: 1 },
+    }, true), {
+      level: "high",
+      clamped: true,
+      reason: "max unsupported by model",
+    });
+  });
+
   it("scores a 100 KB prompt under 20 microseconds", () => {
     const text = "x ".repeat(50000);
     const input = signals(text);

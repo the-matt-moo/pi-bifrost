@@ -1,3 +1,4 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
 import { classifyWithLLM as invokeClassifier, type ClassifierModel } from "./classifier.js";
@@ -26,6 +27,7 @@ import {
   type BifrostConfig,
 } from "./config.js";
 import {
+  billingClass,
   diagnoseCandidates,
   findCandidates,
   getStrategy,
@@ -283,7 +285,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   function decideThinking(
     prompt: string,
     selectedTier: string,
-    model: { reasoning?: boolean; thinkingLevelMap?: Record<string, unknown> },
+    model: Model<Api> | undefined,
     preview = false,
   ) {
     const thinkingConfig = state.config.thinking;
@@ -303,17 +305,22 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       level = sticky;
       reasons.push(`sticky task floor ${sticky}`);
     }
-    const cap = thinkingConfig?.maxLevel ?? "high";
-    if (compareThinkingLevels(level, cap) > 0) {
-      level = cap;
-      reasons.push(`maximum ${cap}`);
+    const free = model !== undefined && billingClass(model) === "free";
+    if (free) {
+      reasons.push("free model maximum");
+    } else {
+      const cap = thinkingConfig?.maxLevel ?? "high";
+      if (compareThinkingLevels(level, cap) > 0) {
+        level = cap;
+        reasons.push(`maximum ${cap}`);
+      }
+      const tierCap = thinkingConfig?.byTier?.[selectedTier];
+      if (tierCap && compareThinkingLevels(level, tierCap) > 0) {
+        level = tierCap;
+        reasons.push(`${selectedTier} tier maximum ${tierCap}`);
+      }
     }
-    const tierCap = thinkingConfig?.byTier?.[selectedTier];
-    if (tierCap && compareThinkingLevels(level, tierCap) > 0) {
-      level = tierCap;
-      reasons.push(`${selectedTier} tier maximum ${tierCap}`);
-    }
-    const clamp = clampToModel(level, model);
+    const clamp = clampToModel(level, model ?? {}, free);
     if (clamp.reason) reasons.push(clamp.reason);
     const readableReasons = reasons.map((reason) => reason.replace(/^[+-]\d+\s+/, "").replaceAll("-", " "));
     return {
@@ -331,7 +338,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     if (state.thinkingMode === "off") {
       return { level: state.thinkingLevel, mode: "off", summary: "automatic thinking selection is disabled" };
     }
-    const decision = decideThinking(prompt, selectedTier, model ?? {}, true);
+    const decision = decideThinking(prompt, selectedTier, model, true);
     return { level: decision.level, mode: state.thinkingMode, summary: decision.summary };
   };
 

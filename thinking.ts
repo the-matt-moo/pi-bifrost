@@ -131,7 +131,9 @@ const LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "hi
 export function clampToModel(
   level: ThinkingLevel,
   model: { reasoning?: boolean; thinkingLevelMap?: Record<string, unknown> },
+  maximize = false,
 ): { level: ThinkingLevel; clamped: boolean; reason?: string } {
+  if (maximize) level = "max";
   if (model.reasoning === false) {
     return level === "off"
       ? { level, clamped: false }

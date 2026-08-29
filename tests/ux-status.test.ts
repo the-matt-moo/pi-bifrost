@@ -61,7 +61,11 @@ describe("ux status helpers", () => {
     assert.equal(calls[0]?.key, "bifrost-state");
     assert.match(String(calls[0]?.value ?? ""), /Bifrost · on/);
     assert.equal(calls[1]?.key, "bifrost");
-    assert.match(String(calls[1]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /bifrost: unpinned ~ unsilence/);
+    assert.match(String(calls[1]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /bifrost\s*$/);
+    assert.equal(calls[2]?.key, "bifrost-model");
+    assert.match(String(calls[2]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /model:unpinned/);
+    assert.equal(calls[3]?.key, "bifrost-think");
+    assert.match(String(calls[3]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /think:apply\s*/);
 
     calls.length = 0;
     setBifrostModeStatus(ctx as never, { enabled: false, pinned: false, classifierEnabled: true, silent: false });
@@ -69,7 +73,11 @@ describe("ux status helpers", () => {
     assert.equal(calls[0]?.key, "bifrost-state");
     assert.match(String(calls[0]?.value ?? ""), /Bifrost · off/);
     assert.equal(calls[1]?.key, "bifrost");
-    assert.match(String(calls[1]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /bifrost: unpinned ~ unsilence/);
+    assert.match(String(calls[1]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /bifrost\s*$/);
+    assert.equal(calls[2]?.key, "bifrost-model");
+    assert.match(String(calls[2]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /model:unpinned/);
+    assert.equal(calls[3]?.key, "bifrost-think");
+    assert.match(String(calls[3]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /think:apply\s*/);
 
     calls.length = 0;
     setBifrostModeStatus(ctx as never, {
@@ -83,7 +91,11 @@ describe("ux status helpers", () => {
     assert.equal(calls[0]?.key, "bifrost-state");
     assert.match(String(calls[0]?.value ?? ""), /Bifrost · pinned · think:advisory/);
     assert.equal(calls[1]?.key, "bifrost");
-    assert.match(String(calls[1]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /bifrost: pinned ~ silence ~ think:advisory/);
+    assert.match(String(calls[1]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /bifrost\s*$/);
+    assert.equal(calls[2]?.key, "bifrost-model");
+    assert.match(String(calls[2]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /model:pinned/);
+    assert.equal(calls[3]?.key, "bifrost-think");
+    assert.match(String(calls[3]?.value ?? "").replace(/\x1b\[[0-9;]*m/g, ""), /think:advisory\s*/);
   });
 
   it("refreshes when there is no prior refresh", () => {

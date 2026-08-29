@@ -1,3 +1,4 @@
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -53,7 +54,7 @@ export interface BifrostState {
   previewThinking?: (
     prompt: string,
     selectedTier: string,
-    model: { reasoning?: boolean; thinkingLevelMap?: Record<string, unknown> } | undefined,
+    model: Model<Api> | undefined,
   ) => { level: ThinkingLevel; mode: string; summary: string };
   pinned: boolean;
   silent: boolean;

@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.5 - 29-08-2026
+
+### Changed
+- Free models now automatically use their highest supported thinking level in advisory/apply mode; manual thinking pins still take precedence.
+
 ## 4.5.4 - 28-08-2026
 
 ### Added

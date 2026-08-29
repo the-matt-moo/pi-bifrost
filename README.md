@@ -227,6 +227,7 @@ Registry refreshes use stale-while-revalidate: existing models route the current
 If `"thinking": { "mode": "apply" }` is set in config, Bifrost assesses prompt complexity to dynamically steer the selected model's **thinking level/effort**.
 - Ambiguous logic puzzles, architectural queries, or math proofs elevate the thinking budget.
 - Simple formatting or translation requests lower the thinking budget.
+- Free models always use their highest supported thinking level; manual thinking pins still take precedence.
 - `advisory` mode logs what Bifrost *would* do without modifying Pi's active state.
 - When *you* manually change the thinking level, Bifrost logs `Thinking level manually changed to <level>; Bifrost thinking pinned.` and pins for the session. Bifrost's own automatic applies are silent — that line means a manual change, not a Bifrost default.
 - Only a thinking change under the *same* model pins thinking. Switching models (`Ctrl+P`) re-clamps the thinking level as a side effect; that never pins. `Ctrl+Delete` unpins model and thinking.
