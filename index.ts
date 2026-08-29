@@ -801,6 +801,11 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       };
 
       if (modelKey(model) === modelKey(ctx.model)) {
+        if (!state.pinned && classification.kind === "classified") {
+          state.pinned = true;
+          debug("input", "auto_pin", { model: modelKey(model), source: classification.source });
+          log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${classification.source}]`);
+        }
         applyThinking();
         uiDone(ctx);
         syncBifrostModeStatus(ctx, state);
@@ -843,6 +848,14 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       endSwitch({ model: modelKey(model), ok });
       uiDone(ctx);
       setBifrostWorkingMessage(ctx, undefined);
+      // Auto-pin on successful classifier/regex model switch to prevent
+      // context-loss from per-prompt model changes (session-local, ADR-0015).
+      if (ok && !state.pinned && classification.kind === "classified") {
+        state.pinned = true;
+        debug("input", "auto_pin", { model: modelKey(model), source: classification.source });
+        log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${classification.source}]`);
+      }
+
       if (!ok) {
         selfSelecting = false;
         state.forceRegistryRefresh = true;

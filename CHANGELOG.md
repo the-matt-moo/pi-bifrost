@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.7 - 29-08-2026
+
+### Added
+- **Auto-pin on classified model switch**: when Bifrost classifies a prompt (via LLM classifier or regex rules) and routes to a different model, it automatically pins that model for the rest of the session. This prevents per-prompt model churn from fragmenting context (cache misses, thinking-level resets, and quota-tracking gaps between providers). Manual inline overrides (e.g. `frontier debug this`) still switch without pinning; `Ctrl+Delete` unpins at any time. Auto-pin is session-local and never persisted (ADR-0015).
+
 ## 4.5.6 - 29-08-2026
 
 ### Added

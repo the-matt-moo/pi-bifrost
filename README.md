@@ -29,7 +29,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Credit spend policy | All candidates equally eligible | Subscription providers (Codex, Antigravity, Anthropic) preferred; `subscription_balance` blocks paid OpenRouter until subscriptions drain past `reservePercent`; `subscription_preferred` prioritizes subscription models entirely, falling back to free/unknown/paid-credit only when no subscription models are available |
 | Model discovery | Probes all Pi models | Adds `--scoped` (Pi enabled-models only, always included when requested regardless of discovery errors) and `--free` (top 5 OpenRouter free models by collection ranking, or top 5 fastest if ranking fetch fails) flags for `init` and `update`; `update --free` enforces the same cap |
 | Candidate scoping | Full registry | Classifier model lookup and tier inference filter candidates to Pi's scoped-model selection, preventing routing to models the user has not enabled |
-| Pin quota safety | Manual pin remains until explicitly removed | A pinned model with fresh telemetry showing exhausted usage is automatically unpinned and switched to a same-tier scoped model from another provider with measured quota available |
+| Pin quota safety | Manual pin remains until explicitly removed | A pinned model with fresh telemetry showing exhausted usage is automatically unpinned and switched to a same-tier scoped model from another provider with measured quota available; classified switches auto-pin to prevent context-loss churn from per-prompt model changes |
 | Reliability | Threshold-based circuit breaker | Any final runtime provider error immediately opens that model's circuit (including `ResourceExhausted`); next prompt selects the next healthy model in the same category, then falls back to the default category if needed |
 | Config reconciliation | `init` only | Adds `/bifrost update --scoped/--free` to preview and merge discovery results while preserving manual entries |
 | Silent mode | Not available | `/bifrost silence` / `unsilence` suppresses console and UI output without disabling routing |
@@ -171,7 +171,7 @@ Narrow discovery scope when needed:
 | `/bifrost` | Dashboard with mode, model, and quick actions |
 | `/bifrost init [--force]` | Probe models and generate config; fresh successful probes are reused for one hour unless forced |
 | `/bifrost on` / `off` | Enable or disable routing |
-| `/bifrost pin` / `unpin` | Lock current model for this session; exhausted fresh quota automatically unpins and switches to a comparable scoped model (see `keys` config for shortcuts) |
+| `/bifrost pin` / `unpin` | Lock current model for this session; classified switches auto-pin to prevent context churn, and exhausted fresh quota automatically unpins and switches to a comparable scoped model (see `keys` config for shortcuts) |
 | `/bifrost silence` / `unsilence` | Suppress or restore console output |
 | `/bifrost preview <prompt>` | See model routing, thinking level, and concise reasons without sending |
 | `/bifrost reload` | Reload config after manual edits |
@@ -227,7 +227,10 @@ For every prompt, Bifrost executes a staged evaluation:
 
 Registry refreshes use stale-while-revalidate: existing models route the current prompt immediately while refresh runs in the background. An empty registry or explicit recovery still waits for fresh data. Quota telemetry also backs off after empty results and degrades to neutral routing.
 
-### 4. Thinking Mode Steering
+### 4. Model Autopinning
+To prevent context-loss from per-prompt model churn, Bifrost **auto-pins** the selected model whenever it routes to a different model via the LLM classifier or regex rules (classification source). This keeps thinking-level state, cache continuity, and quota tracking stable across a multi-model session. Manual inline overrides (e.g. `frontier debug this`) switch without pinning — only classified switches lock in. `Ctrl+Delete` unpins at any time. Autopinning is session-local and never persisted.
+
+### 5. Thinking Mode Steering
 If `"thinking": { "mode": "apply" }` is set in config, Bifrost assesses prompt complexity to dynamically steer the selected model's **thinking level/effort**.
 - Ambiguous logic puzzles, architectural queries, or math proofs elevate the thinking budget.
 - Simple formatting or translation requests lower the thinking budget.
