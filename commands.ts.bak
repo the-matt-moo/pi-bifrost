@@ -1059,47 +1059,6 @@ async function handleAddModel(
   writeAndReloadConfig(current, state);
   log(ctx, `Updated bifrost.json categories for "${key}"`);
 
-  // Also update agent-level override bifrost.json
-  const agentBifrostPath = join(getAgentDir(), "bifrost.json");
-  if (existsSync(agentBifrostPath)) {
-    const agentCurrent = readJson<BifrostConfig>(agentBifrostPath) ?? {};
-    let agentUpdated = false;
-
-    // Add to categories
-    agentCurrent.models = agentCurrent.models ?? {};
-    for (const cat of selectedCategories) {
-      const list = agentCurrent.models[cat];
-      if (Array.isArray(list)) {
-        if (!list.includes(key)) {
-          list.push(key);
-          agentUpdated = true;
-        }
-      } else if (typeof list === "string") {
-        if (list !== key) {
-          agentCurrent.models[cat] = [list, key];
-          agentUpdated = true;
-        }
-      } else {
-        agentCurrent.models[cat] = [key];
-        agentUpdated = true;
-      }
-    }
-
-    // Mark as scoped in discovery
-    agentCurrent.discovery = agentCurrent.discovery ?? { managed: {} };
-    agentCurrent.discovery.managed = agentCurrent.discovery.managed ?? {};
-    const agentManagedSources = agentCurrent.discovery.managed[key] ?? [];
-    if (!agentManagedSources.includes("scoped")) {
-      agentCurrent.discovery.managed[key] = [...agentManagedSources, "scoped"];
-      agentUpdated = true;
-    }
-
-    if (agentUpdated) {
-      writeFileSync(agentBifrostPath, JSON.stringify(agentCurrent, null, 2));
-      log(ctx, `Also added "${key}" to agent-level bifrost.json categories: ${[...selectedCategories].join(", ")}`);
-    }
-  }
-
   // Run registry refresh
   uiBusy(ctx, "Refreshing registry...");
   try {
@@ -1185,42 +1144,9 @@ async function handleRemoveModel(
     return;
   }
 
-  // Check and remove from agent-level override bifrost.json
-  const agentBifrostPath = join(getAgentDir(), "bifrost.json");
-  let wasInAgentBifrost = false;
-  let removedFromAgentCategories: string[] = [];
-  if (existsSync(agentBifrostPath)) {
-    const agentCurrent = readJson<BifrostConfig>(agentBifrostPath) ?? {};
-    const agentModels = agentCurrent.models ?? {};
-    for (const [cat, modelList] of Object.entries(agentModels)) {
-      const list = Array.isArray(modelList) ? modelList : [modelList];
-      const idx = list.indexOf(key);
-      if (idx >= 0) {
-        wasInAgentBifrost = true;
-        list.splice(idx, 1);
-        agentModels![cat] = list.length === 1 ? list[0] : list;
-        removedFromAgentCategories.push(cat);
-      }
-    }
-
-    // Remove from discovery.managed in agent config
-    if (agentCurrent.discovery?.managed?.[key]) {
-      wasInAgentBifrost = true;
-      delete agentCurrent.discovery.managed[key];
-    }
-
-    if (wasInAgentBifrost) {
-      writeFileSync(agentBifrostPath, JSON.stringify(agentCurrent, null, 2));
-      log(ctx, `Removed "${key}" from agent-level bifrost.json categories: ${removedFromAgentCategories.join(", ") ?? "(none)"}`);
-    }
-  }
-
   // Write and reload config
   writeAndReloadConfig(current, state);
   log(ctx, `Updated bifrost.json: removed "${key}" from categories: ${removedFromCategories.join(", ") ?? "(none)"}`);
-  if (removedFromAgentCategories.length > 0) {
-    log(ctx, `Also removed "${key}" from agent-level bifrost.json: ${removedFromAgentCategories.join(", ") ?? "(none)"}`);
-  }
 
   // Run registry refresh
   uiBusy(ctx, "Refreshing registry...");

@@ -356,6 +356,37 @@ export interface SkippedCandidate {
   openUntil?: number;
 }
 
+export function isProviderQuotaExhausted(
+  model: Model<Api>,
+  quota: QuotaSnapshot | undefined,
+  quotaConfig: QuotaRoutingConfig | undefined,
+  now = Date.now(),
+): boolean {
+  if (!quota || now - quota.fetchedAt >= (quotaConfig?.staleMinutes ?? 15) * 60_000) return false;
+  const remaining = quota.byProvider[model.provider]?.weeklyRemainingFraction;
+  return typeof remaining === "number" && remaining <= (quotaConfig?.reservePercent ?? 0.03);
+}
+
+/** Pick another scoped model in the same capability tier with measured quota available. */
+export function selectComparableAvailableModel(
+  current: Model<Api>,
+  candidates: Model<Api>[],
+  strategy: RoutingStrategy,
+  quota: QuotaSnapshot | undefined,
+  quotaConfig: QuotaRoutingConfig | undefined,
+  now = Date.now(),
+): Model<Api> | undefined {
+  if (!isProviderQuotaExhausted(current, quota, quotaConfig, now) || !quota) return undefined;
+  const reserve = quotaConfig?.reservePercent ?? 0.03;
+  const tier = guessTier(current);
+  const available = candidates.filter((model) =>
+    model.provider !== current.provider &&
+    guessTier(model) === tier &&
+    (quota.byProvider[model.provider]?.weeklyRemainingFraction ?? -1) > reserve
+  );
+  return selectModel(available, strategy, quota, quotaConfig, now);
+}
+
 /** Remove models from providers whose weekly quota is exhausted.
  *  Only applies when quota telemetry is fresh (within staleMinutes).
  *  Never removes ALL candidates — that would deadlock the user. */

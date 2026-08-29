@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.4 - 28-08-2026
+
+### Added
+- Pinned models now automatically unpin before a prompt when fresh quota telemetry shows their provider is exhausted, then switch to a same-tier scoped model from another provider with measured quota available.
+
 ## 4.5.3 - 28-08-2026
 
 ### Fixed

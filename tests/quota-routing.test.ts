@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   billingClass,
+  isProviderQuotaExhausted,
+  selectComparableAvailableModel,
   selectModel,
   selectWeighted,
   subscriptionWeights,
@@ -175,6 +177,41 @@ describe("subscriptionWeights", () => {
 
     const empty = subscriptionWeights([codex, or], { byProvider: {}, fetchedAt: NOW }, FRESH, NOW);
     assert.deepEqual(empty, [1, 1]);
+  });
+});
+
+describe("exhausted pinned-model fallback", () => {
+  it("detects fresh exhausted quota and selects a comparable model from another measured provider", () => {
+    const current = model("openai-codex", "codex");
+    const comparable = model("antigravity", "gemini");
+    const unmeasured = model("anthropic", "claude");
+    const quota = snapshot(NOW, [["openai-codex", 0], ["antigravity", 0.7]]);
+
+    assert.equal(isProviderQuotaExhausted(current, quota, FRESH, NOW), true);
+    assert.equal(
+      selectComparableAvailableModel(
+        current,
+        [current, unmeasured, comparable],
+        "subscription_balance",
+        quota,
+        FRESH,
+        NOW,
+      ),
+      comparable,
+    );
+  });
+
+  it("does not switch on stale telemetry or to an unmeasured provider", () => {
+    const current = model("openai-codex", "codex");
+    const unmeasured = model("anthropic", "claude");
+    const stale = snapshot(NOW - 16 * 60_000, [["openai-codex", 0]]);
+    const fresh = snapshot(NOW, [["openai-codex", 0]]);
+
+    assert.equal(isProviderQuotaExhausted(current, stale, FRESH, NOW), false);
+    assert.equal(
+      selectComparableAvailableModel(current, [unmeasured], "first", fresh, FRESH, NOW),
+      undefined,
+    );
   });
 });
 

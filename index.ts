@@ -30,8 +30,10 @@ import {
   findCandidates,
   getStrategy,
   guessTier,
+  isProviderQuotaExhausted,
   modelKey,
   resolveModelWithFallback,
+  selectComparableAvailableModel,
 } from "./routing.js";
 import { QuotaStore } from "./quota.js";
 import { ReliabilityStore } from "./reliability-store.js";
@@ -580,12 +582,51 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         depth: process.env.PI_SUBAGENT_PARENT_DEPTH,
       });
     }
-    if (!state.enabled || state.pinned) {
-      debug("input", "bypass", { enabled: state.enabled, pinned: state.pinned });
+    if (!state.enabled) {
+      debug("input", "bypass", { enabled: false, pinned: state.pinned });
       syncBifrostModeStatus(ctx, state);
-      if (state.pinned) {
-        log(ctx, formatBifrostRouting("", modelKey(ctx.model), "", true));
+      return { action: "continue" };
+    }
+
+    if (state.pinned) {
+      const now = Date.now();
+      await quotaStore.refreshIfStale(now);
+      const current = ctx.model;
+      const quota = quotaStore.getSnapshot();
+      if (current && isProviderQuotaExhausted(current, quota, state.config.quotaRouting, now)) {
+        const tier = guessTier(current);
+        const replacement = selectComparableAvailableModel(
+          current,
+          ctx.scopedModels.map(({ model }) => model),
+          getStrategy(state.config.categoryStrategies, state.config.strategy, tier),
+          quota,
+          state.config.quotaRouting,
+          now,
+        );
+        if (replacement) {
+          selfSelecting = true;
+          let switched = false;
+          try {
+            switched = await pi.setModel(replacement);
+          } catch (err) {
+            debug("input", "exhausted_pin_switch_failed", { model: modelKey(replacement), error: String(err) });
+          }
+          if (switched) {
+            state.pinned = false;
+            state.saveModeState();
+            syncBifrostModeStatus(ctx, state);
+            log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit; unpinned and switched to comparable ${modelKey(replacement)}.`, "warning");
+            return { action: "continue" };
+          }
+          selfSelecting = false;
+          log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit, but switching to ${modelKey(replacement)} failed; pin retained.`, "error");
+        } else {
+          log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit; no comparable scoped model with available quota was found, so the pin was retained.`, "warning");
+        }
       }
+      debug("input", "bypass", { enabled: true, pinned: true });
+      syncBifrostModeStatus(ctx, state);
+      log(ctx, formatBifrostRouting("", modelKey(ctx.model), "", true));
       return { action: "continue" };
     }
 
