@@ -112,6 +112,18 @@
     "thinking": {
       "$ref": "#/definitions/ThinkingConfig"
     },
+    "compactBeforeSwitch": {
+      "type": "boolean",
+      "description": "Auto-compact conversation history before switching models, so the post-switch cache miss re-bills fewer tokens. Only fires when context usage crosses compactBeforeSwitchThreshold.",
+      "default": false
+    },
+    "compactBeforeSwitchThreshold": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "Context-window percent above which to compact before a model switch.",
+      "default": 60
+    },
     "cache": {
       "$ref": "#/definitions/CacheConfig"
     },
@@ -370,6 +382,13 @@
           "type": "boolean",
           "description": "Fall back to regex rules when the classifier fails or returns an unknown category.",
           "default": true
+        },
+        "confidenceThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum LLM-reported confidence (0-1) required to accept a classifier tier. Lower-confident classifications fall through to regex/fallback, keeping the current model stable and reducing model-switch cache misses. 0 accepts any confidently-tagged tier.",
+          "default": 0
         },
         "systemPrompt": {
           "type": "string",

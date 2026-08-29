@@ -2,6 +2,15 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.6 - 29-08-2026
+
+### Added
+- Classifier confidence gating: `classifier.confidenceThreshold` rejects low-confidence LLM tier picks so routing falls through to regex/default instead of switching models unnecessarily.
+- Pre-switch compaction: `compactBeforeSwitch` compacts conversation history before `pi.setModel()` when context usage crosses `compactBeforeSwitchThreshold`, reducing the tokens re-billed on a cache miss.
+
+### Changed
+- Classifier responses now carry an optional confidence score (`tier 0.0-1.0`); old prompts that only emit the tier name still work and default to full confidence.
+
 ## 4.5.5 - 29-08-2026
 
 ### Changed

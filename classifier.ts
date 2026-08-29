@@ -43,8 +43,10 @@ function isOpenAiCompatibleEndpoint(cm: ClassifierModel): boolean {
 }
 
 const DEFAULT_SYSTEM_PROMPT =
-  "You are a routing classifier. Classify each request into exactly one tier." +
-  " Respond with only the tier name. No explanation, no punctuation.";
+  "You are a routing classifier. Classify each request into exactly one tier.\n" +
+  "Respond with the tier name followed by a confidence score from 0.0 to 1.0,\n" +
+  "space-separated, e.g. `frontier 0.97`. No explanation, no punctuation.\n" +
+  "If ambiguous, give a low confidence score (below 0.5).";
 
 export interface ClassifierOptions {
   systemPrompt?: string;
@@ -53,6 +55,35 @@ export interface ClassifierOptions {
   method?: "direct" | "subprocess" | "auto";
   tierDescriptions?: Record<string, string>;
   signal?: AbortSignal;
+  /** Minimum accepted confidence (0-1). Responses below this are treated as
+   *  a reject, so routing falls through to regex/fallback and the current
+   *  model stays stable. 0 = accept any confidently-tagged tier. */
+  confidenceThreshold?: number;
+}
+
+/** Parse a classifier response into a tier and a confidence score (0-1).
+ *  Accepts both `tier` and `tier 0.97` / `tier 97%` / `tier, 0.97` forms.
+ *  Confidence defaults to 1 (fully confident) when the model omits it. */
+export function parseClassification(text: string, categories: readonly string[]): {
+  tier?: string;
+  confidence: number;
+} {
+  const t = text.trim();
+  const confMatch = t.match(/(\d?\d(?:\.\d+)?)\s*%?$/u);
+  let confidence = 1;
+  let body = t;
+  if (confMatch) {
+    const num = Number(confMatch[1]);
+    if (num > 1) confidence = num / 100;
+    else confidence = num;
+    if (confidence >= 0 && confidence <= 1) {
+      body = t.slice(0, confMatch.index ?? 0).trim();
+    } else {
+      confidence = 1;
+    }
+  }
+  const tier = extractCategory(body, categories);
+  return { tier, confidence };
 }
 
 export function categoryLabel(category: string): string {
@@ -147,11 +178,18 @@ async function classifyWithDirectHttp(
           return { attempted: true };
         }
 
-        const result = extractCategory(content, categories);
+        const parsed = parseClassification(content, categories);
+        const result =
+          parsed.tier !== undefined &&
+          parsed.confidence >= (options.confidenceThreshold ?? 0)
+            ? parsed.tier
+            : undefined;
         debug("classifier", "registry.done", {
           model: classifierId(classifierModel),
           raw: content.slice(0, 100),
-          tier: result,
+          tier: parsed.tier,
+          confidence: parsed.confidence,
+          threshold: options.confidenceThreshold ?? 0,
         });
         return { attempted: true, result };
       } catch {
@@ -205,11 +243,18 @@ async function classifyWithDirectHttp(
       return { attempted: true };
     }
 
-    const result = extractCategory(content, categories);
+    const parsed = parseClassification(content, categories);
+    const result =
+      parsed.tier !== undefined &&
+      parsed.confidence >= (options.confidenceThreshold ?? 0)
+        ? parsed.tier
+        : undefined;
     debug("classifier", "http.done", {
       model: classifierId(classifierModel),
       raw: content.slice(0, 100),
-      tier: result,
+      tier: parsed.tier,
+      confidence: parsed.confidence,
+      threshold: options.confidenceThreshold ?? 0,
     });
     return { attempted: true, result };
   } catch {
@@ -312,11 +357,18 @@ async function classifyWithSubprocess(
         finish(undefined);
         return;
       }
-      const result = extractCategory(stdout, categories);
+      const parsed = parseClassification(stdout, categories);
+      const result =
+        parsed.tier !== undefined &&
+        parsed.confidence >= (options.confidenceThreshold ?? 0)
+          ? parsed.tier
+          : undefined;
       debug("classifier", "subprocess.done", {
         model: `${model.provider}/${model.id}`,
         raw: stdout.trim().slice(0, 100),
-        tier: result,
+        tier: parsed.tier,
+        confidence: parsed.confidence,
+        threshold: options.confidenceThreshold ?? 0,
       });
       finish(result);
     });

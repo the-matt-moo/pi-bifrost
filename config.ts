@@ -33,6 +33,10 @@ export interface ClassifierConfig {
   /** Temporary cooldown after a failed classifier attempt. */
   cooldownSeconds?: number;
   fallbackToRegex?: boolean;
+  /** Minimum LLM-confidence (0-1) required to accept a classifier tier.
+   *  Lower-confidence classifications fall through to regex/fallback,
+   *  keeping the current model stable and reducing model-switch cache misses. */
+  confidenceThreshold?: number;
 }
 
 export interface ThinkingConfig {
@@ -67,6 +71,11 @@ export interface BifrostConfig {
   discovery?: DiscoveryConfig;
   quotaRouting?: QuotaRoutingConfig;
   thinking?: ThinkingConfig;
+  /** Auto-compact conversation history before switching models, so the
+   *  post-switch cache miss re-bills fewer tokens. */
+  compactBeforeSwitch?: boolean;
+  /** Context-window percent (0-100) above which to compact before a switch. */
+  compactBeforeSwitchThreshold?: number;
 }
 
 export const DEFAULT_RULES: RouteRule[] = [
@@ -287,6 +296,16 @@ export function validateConfig(
   }
   if (classifier?.cooldownSeconds !== undefined && (!Number.isFinite(classifier.cooldownSeconds) || classifier.cooldownSeconds < 0)) {
     issues.push({ severity: "error", message: `Classifier cooldownSeconds must be >= 0, got ${classifier.cooldownSeconds}.` });
+  }
+  if (classifier?.confidenceThreshold !== undefined &&
+      (!Number.isFinite(classifier.confidenceThreshold) || classifier.confidenceThreshold < 0 || classifier.confidenceThreshold > 1)) {
+    issues.push({ severity: "error", message: `Classifier confidenceThreshold must be between 0 and 1, got ${classifier.confidenceThreshold}.` });
+  }
+  if (config.compactBeforeSwitch &&
+      config.compactBeforeSwitchThreshold !== undefined &&
+      (!Number.isFinite(config.compactBeforeSwitchThreshold) ||
+       config.compactBeforeSwitchThreshold < 1 || config.compactBeforeSwitchThreshold > 100)) {
+    issues.push({ severity: "error", message: `compactBeforeSwitchThreshold must be between 1 and 100, got ${config.compactBeforeSwitchThreshold}.` });
   }
 
   const quota = config.quotaRouting;

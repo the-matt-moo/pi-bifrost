@@ -141,6 +141,7 @@ function buildPipeline(
         temperature: config.classifier?.temperature,
         method: config.classifier?.method,
         tierDescriptions,
+        confidenceThreshold: config.classifier?.confidenceThreshold,
         signal: signal && ctx.signal ? AbortSignal.any([signal, ctx.signal]) : (signal ?? ctx.signal),
       }),
     regexRules: rules,
@@ -814,6 +815,21 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
       uiBusy(ctx, `Bifrost routing to ${modelKey(model)}...`);
       setBifrostWorkingMessage(ctx, `Bifrost routing to ${modelKey(model)}...`);
+
+      // Auto-compact before a model switch: a cache miss re-bills the full
+      // conversation prefix at the new model's input rate. Shrinking the
+      // history first keeps that re-bill small. Fire-and-forget — compaction
+      // collects at its own cadence and must not block routing. (ponytail:
+      // no await; compaction is async under the hood.)
+      if (state.config.compactBeforeSwitch) {
+        const usage = ctx.getContextUsage?.();
+        const thresholdPct = state.config.compactBeforeSwitchThreshold ?? 60;
+        if (usage?.percent != null && usage.percent >= thresholdPct) {
+          log(ctx, `Bifrost: context at ${Math.round(usage.percent)}% — compacting before model switch to ${modelKey(model)}`, "warning");
+          ctx.compact?.();
+        }
+      }
+
       selfSelecting = true;
       const endSwitch = debugMeasure("input", "setModel");
       let ok = false;

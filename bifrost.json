@@ -16,8 +16,12 @@
     "enabled": true,
     "model": "openai-codex/gpt-5.4-mini",
     "method": "auto",
-    "fallbackToRegex": true
+    "fallbackToRegex": true,
+    "confidenceThreshold": 0.4
   },
+
+  "compactBeforeSwitch": true,
+  "compactBeforeSwitchThreshold": 60,
 
   "cache": {
     "enabled": true,

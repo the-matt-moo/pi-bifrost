@@ -38,6 +38,8 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Classifier accuracy | Tier names only in LLM prompt | Auto-generated tier descriptions from regex rules injected into classifier prompt |
 | Multi-turn routing | Each prompt classified independently | Session momentum: 2+ same-tier classifications carry forward; topic-change detection resets momentum |
 | Routing latency | Sequential: cache miss → LLM → regex | Stale-while-revalidate registry updates, bounded classifier attempts, failure cooldowns, indexed cache lookup, and complexity short-circuits keep prompt routing off slow maintenance paths |
+| Classifier confidence | Tier-only LLM output | `classifier.confidenceThreshold` rejects low-confidence picks so routing falls through to regex/default instead of switching models unnecessarily |
+| Cache-miss cost | Full conversation re-billed after switch | `compactBeforeSwitch` compacts history before `pi.setModel()` once context usage crosses `compactBeforeSwitchThreshold`, shrinking the re-bill |
 | Self-correction | Static cache, no feedback | Demotion tracking on manual overrides; cache entries auto-escalate tier after 3 demotions |
 | Cold start | Empty cache → every prompt hits LLM | Cache warm-start seeds entries from regex rules on first use |
 
@@ -53,11 +55,13 @@ The improved pipeline addresses each of these gaps:
 
 3. **Tier descriptions** tell the classifier LLM what each tier actually handles (auto-generated from your regex rules), instead of just sending bare tier names. This improves accuracy for ambiguous prompts.
 
-4. **Bounded classification** limits classifier attempts to a shared wall-clock budget. Failed classifier models enter a short cooldown, and `auto` mode does not resend completed invalid direct responses through a subprocess.
+4. **Bounded classification** limits classifier attempts to a shared wall-clock budget. Failed classifier models enter a short cooldown, `confidenceThreshold` rejects weak tier picks, and `auto` mode does not resend completed invalid direct responses through a subprocess.
 
 5. **Self-correction** tracks when you manually override a routing decision. After 3 such signals on the same prompt pattern, the cache entry's tier auto-escalates.
 
-6. **Warm start and indexed lookup** pre-seed common patterns and keep exact/fuzzy cache lookup allocation low. Cache writes are deferred and coalesced so disk I/O does not block prompt routing.
+6. **Pre-switch compaction** trims history before a model change when context usage is high, so the inevitable cache miss re-bills fewer tokens.
+
+7. **Warm start and indexed lookup** pre-seed common patterns and keep exact/fuzzy cache lookup allocation low. Cache writes are deferred and coalesced so disk I/O does not block prompt routing.
 
 ## Statusline
 
