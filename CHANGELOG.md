@@ -2,6 +2,33 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.10 - 29-08-2026
+
+### Added
+- Context-safe switching now projects usage against the target model window and waits for compaction before normal, quota, and retry handoffs.
+- `classifier.fallbackToRegex` now controls regex tier fallback after classifier failure or rejection.
+
+### Changed
+- Classifier prompts are capped at 8,000 characters and 8 output tokens; confidence is required when gating is enabled.
+- Valid classifier rejections fall through immediately without another paid attempt or failure cooldown.
+- Pinned-session prompts now refresh topic history, including short unrelated-topic detection.
+- Model probes use a four-token response budget.
+
+### Fixed
+- Failed or unavailable compaction now retains the current model and reports why instead of racing the model switch.
+- Config/schema defaults now match the shipped context-preservation and confidence settings.
+
+## 4.5.9 - 29-08-2026
+
+### Changed
+- Automatic regex and fallback routes now auto-pin the main-session model to avoid context loss from mid-session provider handoffs.
+- Pins now release for explicit inline overrides, clearly unrelated topics, or exhausted providers; subagent model routing remains independent.
+
+## 4.5.8 - 29-08-2026
+
+### Added
+- Listed model additions and removals directly inside the `/bifrost refresh` and `/bifrost probe` TUI confirmation dialog prompt (`Write config update?`).
+
 ## 4.5.7 - 29-08-2026
 
 ### Added

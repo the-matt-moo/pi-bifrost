@@ -43,10 +43,14 @@ function isOpenAiCompatibleEndpoint(cm: ClassifierModel): boolean {
 }
 
 const DEFAULT_SYSTEM_PROMPT =
-  "You are a routing classifier. Classify each request into exactly one tier.\n" +
-  "Respond with the tier name followed by a confidence score from 0.0 to 1.0,\n" +
-  "space-separated, e.g. `frontier 0.97`. No explanation, no punctuation.\n" +
-  "If ambiguous, give a low confidence score (below 0.5).";
+  "You are a routing classifier. Follow the requested output format exactly.";
+const DEFAULT_MAX_TOKENS = 8;
+const MAX_CLASSIFIER_PROMPT_CHARS = 8_000;
+
+export type ClassifierAttempt =
+  | { readonly status: "accepted"; readonly tier: string }
+  | { readonly status: "rejected" }
+  | { readonly status: "failed" };
 
 export interface ClassifierOptions {
   systemPrompt?: string;
@@ -61,25 +65,21 @@ export interface ClassifierOptions {
   confidenceThreshold?: number;
 }
 
-/** Parse a classifier response into a tier and a confidence score (0-1).
- *  Accepts both `tier` and `tier 0.97` / `tier 97%` / `tier, 0.97` forms.
- *  Confidence defaults to 1 (fully confident) when the model omits it. */
+/** Parse `tier` or `tier <confidence>` without inventing missing confidence. */
 export function parseClassification(text: string, categories: readonly string[]): {
   tier?: string;
-  confidence: number;
+  confidence?: number;
 } {
   const t = text.trim();
   const confMatch = t.match(/(\d?\d(?:\.\d+)?)\s*%?$/u);
-  let confidence = 1;
+  let confidence: number | undefined;
   let body = t;
   if (confMatch) {
     const num = Number(confMatch[1]);
-    if (num > 1) confidence = num / 100;
-    else confidence = num;
-    if (confidence >= 0 && confidence <= 1) {
+    const parsed = num > 1 ? num / 100 : num;
+    if (parsed >= 0 && parsed <= 1) {
+      confidence = parsed;
       body = t.slice(0, confMatch.index ?? 0).trim();
-    } else {
-      confidence = 1;
     }
   }
   const tier = extractCategory(body, categories);
@@ -94,6 +94,7 @@ export function classificationPrompt(
   categories: readonly string[],
   userPrompt: string,
   tierDescriptions?: Record<string, string>,
+  requireConfidence = false,
 ): string {
   const categoryList = tierDescriptions
     ? categories.map((c) => {
@@ -101,11 +102,17 @@ export function classificationPrompt(
         return desc ? `${categoryLabel(c)}: ${desc}` : categoryLabel(c);
       }).join("\n")
     : categories.map(categoryLabel).join(", ");
+  const request = userPrompt.length <= MAX_CLASSIFIER_PROMPT_CHARS
+    ? userPrompt
+    : `${userPrompt.slice(0, 4_000)}\n...[middle omitted]...\n${userPrompt.slice(-4_000)}`;
+  const output = requireConfidence
+    ? "<category> <confidence 0.0-1.0>"
+    : "<category>";
 
   return (
     `Categories:\n${categoryList}\n\n` +
-    `Classify the request into exactly one category. Respond with only the category name.\n\n` +
-    `Request: ${userPrompt}\n\n` +
+    `Choose exactly one category. Output ${output}. No explanation.\n\n` +
+    `Request: ${request}\n\n` +
     `Category:`
   );
 }
@@ -124,8 +131,22 @@ function piCommand(): { command: string; args: string[] } {
   return { command: "pi", args: [] };
 }
 
+export function parseAttempt(
+  content: string,
+  categories: readonly string[],
+  confidenceThreshold: number,
+): ClassifierAttempt {
+  const parsed = parseClassification(content, categories);
+  if (!parsed.tier) return { status: "rejected" };
+  if (confidenceThreshold > 0 &&
+      (parsed.confidence === undefined || parsed.confidence < confidenceThreshold)) {
+    return { status: "rejected" };
+  }
+  return { status: "accepted", tier: parsed.tier };
+}
+
 interface DirectClassification {
-  result?: string;
+  outcome: ClassifierAttempt;
   /** True once a provider/endpoint accepted a direct attempt. */
   attempted: boolean;
 }
@@ -138,16 +159,17 @@ async function classifyWithDirectHttp(
   options: ClassifierOptions = {},
 ): Promise<DirectClassification> {
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-  const maxTokens = options.maxTokens ?? 20;
+  const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
   const temperature = options.temperature ?? 0;
-  const userPrompt = classificationPrompt(categories, prompt, options.tierDescriptions);
+  const threshold = options.confidenceThreshold ?? 0;
+  const userPrompt = classificationPrompt(categories, prompt, options.tierDescriptions, threshold > 0);
 
   if (classifierModel.kind === "registry") {
     try {
       const provider = ctx.modelRegistry.getProvider(classifierModel.model.provider);
-      if (!provider) return { attempted: false };
+      if (!provider) return { attempted: false, outcome: { status: "failed" } };
       const auth = await ctx.modelRegistry.getProviderAuth(classifierModel.model.provider);
-      if (!auth) return { attempted: false };
+      if (!auth) return { attempted: false, outcome: { status: "failed" } };
 
       const stream = provider.streamSimple(
         classifierModel.model,
@@ -175,33 +197,30 @@ async function classifyWithDirectHttp(
 
         if (!content) {
           debug("classifier", "registry.empty_response", { model: classifierId(classifierModel) });
-          return { attempted: true };
+          return { attempted: true, outcome: { status: "failed" } };
         }
 
         const parsed = parseClassification(content, categories);
-        const result =
-          parsed.tier !== undefined &&
-          parsed.confidence >= (options.confidenceThreshold ?? 0)
-            ? parsed.tier
-            : undefined;
+        const outcome = parseAttempt(content, categories, threshold);
         debug("classifier", "registry.done", {
           model: classifierId(classifierModel),
           raw: content.slice(0, 100),
           tier: parsed.tier,
           confidence: parsed.confidence,
-          threshold: options.confidenceThreshold ?? 0,
+          threshold,
+          status: outcome.status,
         });
-        return { attempted: true, result };
+        return { attempted: true, outcome };
       } catch {
-        return { attempted: true };
+        return { attempted: true, outcome: { status: "failed" } };
       }
     } catch {
-      return { attempted: false };
+      return { attempted: false, outcome: { status: "failed" } };
     }
   }
 
   if (!isOpenAiCompatibleEndpoint(classifierModel)) {
-    return { attempted: false };
+    return { attempted: false, outcome: { status: "failed" } };
   }
 
   const body = {
@@ -231,7 +250,7 @@ async function classifyWithDirectHttp(
       console.error(
         `[bifrost] classifier HTTP ${response.status} from ${classifierBaseUrl(classifierModel)}`,
       );
-      return { attempted: true };
+      return { attempted: true, outcome: { status: "failed" } };
     }
 
     const data = (await response.json()) as {
@@ -240,25 +259,22 @@ async function classifyWithDirectHttp(
     const content = data.choices?.[0]?.message?.content?.trim();
     if (!content) {
       debug("classifier", "http.empty_response", { url: classifierBaseUrl(classifierModel) });
-      return { attempted: true };
+      return { attempted: true, outcome: { status: "failed" } };
     }
 
     const parsed = parseClassification(content, categories);
-    const result =
-      parsed.tier !== undefined &&
-      parsed.confidence >= (options.confidenceThreshold ?? 0)
-        ? parsed.tier
-        : undefined;
+    const outcome = parseAttempt(content, categories, threshold);
     debug("classifier", "http.done", {
       model: classifierId(classifierModel),
       raw: content.slice(0, 100),
       tier: parsed.tier,
       confidence: parsed.confidence,
-      threshold: options.confidenceThreshold ?? 0,
+      threshold,
+      status: outcome.status,
     });
-    return { attempted: true, result };
+    return { attempted: true, outcome };
   } catch {
-    return { attempted: true };
+    return { attempted: true, outcome: { status: "failed" } };
   }
 }
 
@@ -268,14 +284,15 @@ async function classifyWithSubprocess(
   categories: readonly string[],
   prompt: string,
   options: ClassifierOptions = {},
-): Promise<string | undefined> {
+): Promise<ClassifierAttempt> {
   // Subprocess only works with registry models (needs provider/id for --model).
-  if (classifierModel.kind !== "registry") return undefined;
+  if (classifierModel.kind !== "registry") return { status: "failed" };
   const model = classifierModel.model;
   debug("classifier", "subprocess.start", { model: `${model.provider}/${model.id}` });
 
   const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
-  const userPrompt = classificationPrompt(categories, prompt, options.tierDescriptions);
+  const threshold = options.confidenceThreshold ?? 0;
+  const userPrompt = classificationPrompt(categories, prompt, options.tierDescriptions, threshold > 0);
   const { command, args } = piCommand();
 
   const piArgs = [
@@ -309,7 +326,7 @@ async function classifyWithSubprocess(
     let stdout = "";
     let stderr = "";
     let settled = false;
-    const finish = (result: string | undefined) => {
+    const finish = (result: ClassifierAttempt) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -318,7 +335,7 @@ async function classifyWithSubprocess(
     };
     const abort = () => {
       child.kill("SIGTERM");
-      finish(undefined);
+      finish({ status: "failed" });
     };
     const timer = setTimeout(() => {
       console.error(`[bifrost] classifier subprocess timed out`);
@@ -339,7 +356,7 @@ async function classifyWithSubprocess(
 
     child.on("error", (err: Error) => {
       console.error(`[bifrost] classifier subprocess error: ${err}`);
-      finish(undefined);
+      finish({ status: "failed" });
     });
 
     child.on("close", (code: number | null) => {
@@ -354,23 +371,20 @@ async function classifyWithSubprocess(
           stderr: stderr.slice(0, 200),
         });
         console.error(`[bifrost] ${formatDiagnostic(diagnostic)}`);
-        finish(undefined);
+        finish({ status: "failed" });
         return;
       }
       const parsed = parseClassification(stdout, categories);
-      const result =
-        parsed.tier !== undefined &&
-        parsed.confidence >= (options.confidenceThreshold ?? 0)
-          ? parsed.tier
-          : undefined;
+      const outcome = parseAttempt(stdout, categories, threshold);
       debug("classifier", "subprocess.done", {
         model: `${model.provider}/${model.id}`,
         raw: stdout.trim().slice(0, 100),
         tier: parsed.tier,
         confidence: parsed.confidence,
-        threshold: options.confidenceThreshold ?? 0,
+        threshold,
+        status: outcome.status,
       });
-      finish(result);
+      finish(outcome);
     });
   });
 }
@@ -381,7 +395,7 @@ export async function classifyWithLLM(
   categories: readonly string[],
   prompt: string,
   options: ClassifierOptions = {},
-): Promise<string | undefined> {
+): Promise<ClassifierAttempt> {
   const method = options.method ?? "auto";
 
   if (method === "direct" || method === "auto") {
@@ -392,14 +406,13 @@ export async function classifyWithLLM(
       prompt,
       options,
     );
-    if (direct.result) return direct.result;
     // A completed direct request must not be repeated through a subprocess.
-    if (direct.attempted) return undefined;
+    if (direct.attempted) return direct.outcome;
   }
 
   if (method === "subprocess" || method === "auto") {
     return classifyWithSubprocess(ctx, classifierModel, categories, prompt, options);
   }
 
-  return undefined;
+  return { status: "failed" };
 }

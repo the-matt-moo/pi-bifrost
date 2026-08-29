@@ -2,7 +2,9 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
 import { classifyWithLLM as invokeClassifier, type ClassifierModel } from "./classifier.js";
+import { prepareContextSwitch } from "./context-switch.js";
 import {
+  autoPinSource,
   createPipeline,
   type ClassificationPipeline,
 } from "./classification-pipeline.js";
@@ -137,7 +139,7 @@ function buildPipeline(
     classifyWithLLM: (model, text, tiers, signal) =>
       invokeClassifier(ctx, model, tiers, text, {
         systemPrompt: config.classifier?.systemPrompt,
-        maxTokens: config.classifier?.maxTokens,
+        maxTokens: config.classifier?.maxTokens ?? 8,
         temperature: config.classifier?.temperature,
         method: config.classifier?.method,
         tierDescriptions,
@@ -151,6 +153,7 @@ function buildPipeline(
     complexityEnabled: true,
     classifierMaxAttempts: config.classifier?.maxAttempts ?? 2,
     classifierTimeoutMs: config.classifier?.timeoutMs ?? 10_000,
+    fallbackToRegex: config.classifier?.fallbackToRegex ?? true,
     classifierCooldownMs: (config.classifier?.cooldownSeconds ?? 60) * 1000,
     classifierCooldowns,
   });
@@ -268,6 +271,15 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     scheduleCacheSave: cacheWriter.schedule,
     flushCacheSave: cacheWriter.flush,
   };
+
+  function prepareSwitch(ctx: ExtensionContext, model: Model<Api>): Promise<boolean> {
+    return prepareContextSwitch(ctx, model, {
+      enabled: state.config.compactBeforeSwitch ?? true,
+      thresholdPercent: state.config.compactBeforeSwitchThreshold ?? 60,
+      targetLabel: modelKey(model),
+      notify: (message, level) => log(ctx, message, level),
+    });
+  }
 
   function inferPattern(ctx: ExtensionContext, tier: string): string[] {
     const raw = state.config.models?.[tier];
@@ -458,7 +470,9 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       !isRetryableProviderLimit(settled.reason) ||
       retry.autoRetryCount >= maxAutoRetries
     ) {
-      const why = isRetryableProviderLimit(settled.reason) && !settled.replaySafe
+      const why = state.pinned
+        ? " automatic retry skipped and pin retained; unpin to allow a provider handoff."
+        : isRetryableProviderLimit(settled.reason) && !settled.replaySafe
         ? " automatic retry skipped because the failed turn produced output or tool results."
         : " next prompt routes to the next healthy model in its tier.";
       log(ctx, `Bifrost: provider failure for ${settled.model} (${detail}circuit opened);${why}`, "warning");
@@ -489,6 +503,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }
 
     const nextKey = modelKey(next);
+    if (!(await prepareSwitch(ctx, next))) return;
     selfSelecting = true;
     let switched = false;
     let switchError: unknown;
@@ -596,6 +611,19 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       return { action: "continue" };
     }
 
+    const text = event.text.trim();
+    if (text.startsWith("/")) return { action: "continue" };
+
+    // Inline tier override: "frontier debug this" forces that tier for one prompt.
+    // Pi reserves / for commands, ! for bash. Just type the tier name as first word.
+    const { forcedTier, promptText } = parseInlineOverride(text, state.config.models);
+    if (forcedTier) debug("input", "inline_override", { tier: forcedTier });
+
+    // Inline override should strip the tier keyword from what LLM sees.
+    const defaultAction = forcedTier
+      ? { action: "transform" as const, text: promptText }
+      : { action: "continue" as const };
+
     if (state.pinned) {
       const now = Date.now();
       await quotaStore.refreshIfStale(now);
@@ -612,6 +640,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
           now,
         );
         if (replacement) {
+          if (!(await prepareSwitch(ctx, replacement))) return defaultAction;
           selfSelecting = true;
           let switched = false;
           try {
@@ -624,7 +653,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
             state.saveModeState();
             syncBifrostModeStatus(ctx, state);
             log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit; unpinned and switched to comparable ${modelKey(replacement)}.`, "warning");
-            return { action: "continue" };
+            return defaultAction;
           }
           selfSelecting = false;
           log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit, but switching to ${modelKey(replacement)} failed; pin retained.`, "error");
@@ -632,26 +661,21 @@ export default function bifrostExtension(pi: ExtensionAPI) {
           log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit; no comparable scoped model with available quota was found, so the pin was retained.`, "warning");
         }
       }
-      debug("input", "bypass", { enabled: true, pinned: true });
-      syncBifrostModeStatus(ctx, state);
-      log(ctx, formatBifrostRouting("", modelKey(ctx.model), "", true));
-      return { action: "continue" };
+
+      if (!forcedTier && !sessionContext.isClearlyUnrelated(promptText)) {
+        sessionContext.record(ctx.model ? guessTier(ctx.model) : (state.config.default ?? "general"), promptText);
+        debug("input", "bypass", { enabled: true, pinned: true });
+        syncBifrostModeStatus(ctx, state);
+        log(ctx, formatBifrostRouting("", modelKey(ctx.model), "", true));
+        return defaultAction;
+      }
+
+      state.pinned = false;
+      sessionContext.reset();
+      const reason = forcedTier ? "manual inline override" : "unrelated topic";
+      debug("input", "auto_unpin", { reason });
+      log(ctx, `Bifrost unpinned for ${reason}.`);
     }
-
-    const text = event.text.trim();
-    if (text.startsWith("/")) return { action: "continue" };
-
-    // Inline tier override: "frontier debug this" forces that tier for one prompt.
-    // Pi reserves / for commands, ! for bash. Just type the tier name as first word.
-    const { forcedTier, promptText } = parseInlineOverride(text, state.config.models);
-    if (forcedTier) {
-      debug("input", "inline_override", { tier: forcedTier });
-    }
-
-    // Inline override should strip the tier keyword from what LLM sees.
-    const defaultAction = forcedTier
-      ? { action: "transform" as const, text: promptText }
-      : { action: "continue" as const };
 
     const endInput = debugMeasure("input", "total");
     debug("input", "prompt", { length: promptText.length });
@@ -690,8 +714,10 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       if (classification.kind === "classified") {
         const tag = classification.source === "inline" ? "!" : classification.source;
         log(ctx, `classify: ${classification.tier} [${tag}]`);
-        sessionContext.record(classification.tier, promptText);
         lastRoutedPrompt = promptText;
+      }
+      if (classification.kind !== "unclassified") {
+        sessionContext.record(classification.tier, promptText);
       }
 
       void quotaStore.refreshIfStale(Date.now());
@@ -712,6 +738,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const source = classification.kind === "classified"
         ? classification.source
         : "fallback";
+      const pinSource = autoPinSource(classification);
       const pattern = inferPattern(ctx, tier);
       const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
       const defaultTier = state.config.default;
@@ -801,10 +828,10 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       };
 
       if (modelKey(model) === modelKey(ctx.model)) {
-        if (!state.pinned && classification.kind === "classified") {
+        if (!state.pinned && pinSource) {
           state.pinned = true;
-          debug("input", "auto_pin", { model: modelKey(model), source: classification.source });
-          log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${classification.source}]`);
+          debug("input", "auto_pin", { model: modelKey(model), source: pinSource });
+          log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${pinSource}]`);
         }
         applyThinking();
         uiDone(ctx);
@@ -821,18 +848,12 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       uiBusy(ctx, `Bifrost routing to ${modelKey(model)}...`);
       setBifrostWorkingMessage(ctx, `Bifrost routing to ${modelKey(model)}...`);
 
-      // Auto-compact before a model switch: a cache miss re-bills the full
-      // conversation prefix at the new model's input rate. Shrinking the
-      // history first keeps that re-bill small. Fire-and-forget — compaction
-      // collects at its own cadence and must not block routing. (ponytail:
-      // no await; compaction is async under the hood.)
-      if (state.config.compactBeforeSwitch) {
-        const usage = ctx.getContextUsage?.();
-        const thresholdPct = state.config.compactBeforeSwitchThreshold ?? 60;
-        if (usage?.percent != null && usage.percent >= thresholdPct) {
-          log(ctx, `Bifrost: context at ${Math.round(usage.percent)}% — compacting before model switch to ${modelKey(model)}`, "warning");
-          ctx.compact?.();
-        }
+      if (!(await prepareSwitch(ctx, model))) {
+        uiDone(ctx);
+        setBifrostWorkingMessage(ctx, undefined);
+        syncBifrostModeStatus(ctx, state);
+        endInput({ model: modelKey(ctx.model), switchSkipped: "context_preservation" });
+        return defaultAction;
       }
 
       selfSelecting = true;
@@ -848,12 +869,12 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       endSwitch({ model: modelKey(model), ok });
       uiDone(ctx);
       setBifrostWorkingMessage(ctx, undefined);
-      // Auto-pin on successful classifier/regex model switch to prevent
-      // context-loss from per-prompt model changes (session-local, ADR-0015).
-      if (ok && !state.pinned && classification.kind === "classified") {
+      // Auto-pin automatic routing, including fallback, after a successful switch.
+      // Explicit inline overrides stay one-shot (session-local, ADR-0015).
+      if (ok && !state.pinned && pinSource) {
         state.pinned = true;
-        debug("input", "auto_pin", { model: modelKey(model), source: classification.source });
-        log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${classification.source}]`);
+        debug("input", "auto_pin", { model: modelKey(model), source: pinSource });
+        log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${pinSource}]`);
       }
 
       if (!ok) {

@@ -17,7 +17,8 @@
     "model": "openai-codex/gpt-5.4-mini",
     "method": "auto",
     "fallbackToRegex": true,
-    "confidenceThreshold": 0.4
+    "confidenceThreshold": 0.4,
+    "maxTokens": 8
   },
 
   "compactBeforeSwitch": true,

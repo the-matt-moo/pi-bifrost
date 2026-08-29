@@ -1,4 +1,4 @@
-import type { ClassifierModel } from "./classifier.ts";
+import type { ClassifierAttempt, ClassifierModel } from "./classifier.ts";
 import { classify as regexClassify, type RouteRule } from "./routing.ts";
 import { debug, debugMeasure } from "./debug.ts";
 import type { SessionRoutingContext } from "./session-context.ts";
@@ -12,6 +12,12 @@ export type ClassificationResult =
   | { readonly kind: "classified"; readonly tier: string; readonly source: ClassificationSource }
   | { readonly kind: "fallback"; readonly tier: string }
   | { readonly kind: "unclassified" };
+
+export function autoPinSource(result: ClassificationResult): ClassificationSource | "fallback" | undefined {
+  if (result.kind === "fallback") return "fallback";
+  if (result.kind === "classified" && result.source !== "inline") return result.source;
+  return undefined;
+}
 
 // ── Pipeline dependencies ──────────────────────────────────────
 
@@ -32,7 +38,7 @@ export interface PipelineDeps {
     text: string,
     tiers: readonly string[],
     signal?: AbortSignal,
-  ) => Promise<string | undefined>;
+  ) => Promise<ClassifierAttempt | string | undefined>;
   /** Regex routing rules. First match wins. */
   readonly regexRules: readonly RouteRule[];
   /** Default tier when nothing matches. */
@@ -49,6 +55,8 @@ export interface PipelineDeps {
   readonly classifierTimeoutMs?: number;
   /** Temporary failure cooldown shared across pipeline rebuilds. */
   readonly classifierCooldownMs?: number;
+  /** Fall back to tier regex rules after classifier rejection/failure. */
+  readonly fallbackToRegex?: boolean;
   readonly classifierCooldowns?: Map<string, number>;
   readonly now?: () => number;
 }
@@ -75,6 +83,7 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
     classifierTimeoutMs = 10_000,
     classifierCooldownMs = 60_000,
     classifierCooldowns = new Map<string, number>(),
+    fallbackToRegex = true,
     now = Date.now,
   } = deps;
 
@@ -143,15 +152,23 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
           attempts++;
           try {
             const endLLM = debugMeasure("pipeline", "classifier.attempt");
-            const tier = await Promise.race([
+            const rawOutcome = await Promise.race([
               classifyWithLLM(model, text, tiers, controller.signal),
               timedOut,
             ]);
-            endLLM({ model: modelId, tier });
-            if (tier && tiers.includes(tier)) {
+            const outcome = typeof rawOutcome === "string"
+              ? { status: "accepted" as const, tier: rawOutcome }
+              : rawOutcome;
+            endLLM({ model: modelId, status: outcome?.status });
+            if (outcome?.status === "accepted" && tiers.includes(outcome.tier)) {
               classifierCooldowns.delete(modelId);
-              debug("pipeline", "result", { source: "classifier", tier });
-              return { kind: "classified", tier, source: "classifier" };
+              debug("pipeline", "result", { source: "classifier", tier: outcome.tier });
+              return { kind: "classified", tier: outcome.tier, source: "classifier" };
+            }
+            if (outcome?.status === "rejected") {
+              classifierCooldowns.delete(modelId);
+              debug("pipeline", "classifier.rejected", { model: modelId });
+              break;
             }
             classifierCooldowns.set(modelId, now() + classifierCooldownMs);
           } catch (err) {
@@ -166,7 +183,7 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
     }
 
     // Stage 4: regex tier match — reuse the single regexResult (classifier already had priority).
-    if (regexResult && tiers.includes(regexResult)) {
+    if (fallbackToRegex && regexResult && tiers.includes(regexResult)) {
       debug("pipeline", "result", { source: "regex", tier: regexResult });
       return { kind: "classified", tier: regexResult, source: "regex" };
     }

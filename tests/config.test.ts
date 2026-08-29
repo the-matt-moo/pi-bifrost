@@ -86,6 +86,17 @@ describe("validateConfig", () => {
     assert.equal(errors.length, 3);
   });
 
+  it("warns when a compaction threshold is configured while compaction is disabled", () => {
+    const issues = validateConfig({
+      ...baseConfig,
+      compactBeforeSwitch: false,
+      compactBeforeSwitchThreshold: 60,
+    });
+    assert.ok(issues.some((issue) =>
+      issue.severity === "warning" && issue.message.includes("is ignored")
+    ));
+  });
+
   it("errors on invalid regex in rules", () => {
     const issues = validateConfig({
       ...baseConfig,

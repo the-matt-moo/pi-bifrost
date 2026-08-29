@@ -14,6 +14,10 @@ interface HistoryEntry {
   timestamp: number;
 }
 
+const CONTINUATION_WORDS = new Set([
+  "again", "continue", "more", "next", "okay", "please", "proceed", "same", "thanks", "that", "this", "yes",
+]);
+
 export class SessionRoutingContext {
   private history: HistoryEntry[] = [];
   private readonly maxHistory: number;
@@ -69,6 +73,23 @@ export class SessionRoutingContext {
     }
 
     return undefined;
+  }
+
+  isClearlyUnrelated(prompt: string): boolean {
+    this.pruneStale();
+    const normalized = normalize(prompt).split(" ").filter(Boolean);
+    if (normalized.every((token) => CONTINUATION_WORDS.has(token))) return false;
+    const current = [...new Set(normalized.filter(
+      (token) => token.length >= 3 && !CONTINUATION_WORDS.has(token),
+    ))];
+    if (current.length < 2 || this.history.length === 0) return false;
+
+    return this.history.every((entry) => {
+      const previous = new Set(entry.normalizedPrompt.split(" ").filter(
+        (token) => token.length >= 3 && !CONTINUATION_WORDS.has(token),
+      ));
+      return current.every((token) => !previous.has(token));
+    });
   }
 
   reset(): void {

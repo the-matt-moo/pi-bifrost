@@ -301,6 +301,9 @@ export function validateConfig(
       (!Number.isFinite(classifier.confidenceThreshold) || classifier.confidenceThreshold < 0 || classifier.confidenceThreshold > 1)) {
     issues.push({ severity: "error", message: `Classifier confidenceThreshold must be between 0 and 1, got ${classifier.confidenceThreshold}.` });
   }
+  if (config.compactBeforeSwitchThreshold !== undefined && config.compactBeforeSwitch === false) {
+    issues.push({ severity: "warning", message: "compactBeforeSwitchThreshold is ignored because compactBeforeSwitch is false." });
+  }
   if (config.compactBeforeSwitch &&
       config.compactBeforeSwitchThreshold !== undefined &&
       (!Number.isFinite(config.compactBeforeSwitchThreshold) ||
@@ -484,7 +487,7 @@ export function generateTierDescriptions(rules: RouteRule[], tiers: readonly str
   for (const tier of tiers) {
     const words = [...keywords[tier]];
     if (words.length > 0) {
-      descriptions[tier] = words.slice(0, 12).join(", ");
+      descriptions[tier] = words.slice(0, 6).join(", ");
     }
   }
   return descriptions;

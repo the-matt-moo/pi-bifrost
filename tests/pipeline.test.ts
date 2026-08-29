@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createPipeline, type PipelineDeps } from "../classification-pipeline.ts";
+import { autoPinSource, createPipeline, type PipelineDeps } from "../classification-pipeline.ts";
 import { makeClassifierModel } from "./helpers.ts";
 
 function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
@@ -16,6 +16,15 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
 }
 
 describe("classification-pipeline", () => {
+  describe("autoPinSource", () => {
+    it("pins automatic classifications and fallback, but not inline overrides", () => {
+      assert.equal(autoPinSource({ kind: "classified", tier: "frontier", source: "regex" }), "regex");
+      assert.equal(autoPinSource({ kind: "fallback", tier: "general" }), "fallback");
+      assert.equal(autoPinSource({ kind: "classified", tier: "frontier", source: "inline" }), undefined);
+      assert.equal(autoPinSource({ kind: "unclassified" }), undefined);
+    });
+  });
+
   describe("unclassified", () => {
     it("returns unclassified when no tiers configured", async () => {
       const p = createPipeline(deps({ tiers: [] }));
@@ -93,6 +102,21 @@ describe("classification-pipeline", () => {
       if (r.kind === "classified") {
         assert.equal(r.source, "classifier");
       }
+    });
+
+    it("does not retry another classifier after a valid rejection", async () => {
+      let calls = 0;
+      const p = createPipeline(deps({
+        classifierModels: [makeClassifierModel("a", "m1"), makeClassifierModel("b", "m2")],
+        classifyWithLLM: async () => {
+          calls++;
+          return { status: "rejected" };
+        },
+        defaultTier: "economical",
+      }));
+      const result = await p.classify("ambiguous request");
+      assert.equal(calls, 1);
+      assert.equal(result.kind, "fallback");
     });
 
     it("validates classifier result against known tiers", async () => {
@@ -229,6 +253,19 @@ describe("classification-pipeline", () => {
       if (r.kind === "classified") {
         assert.equal(r.tier, "custom/model");
       }
+    });
+
+    it("can disable regex fallback after classifier failure", async () => {
+      const p = createPipeline(deps({
+        classifierModels: [makeClassifierModel("a", "m1")],
+        classifyWithLLM: async () => ({ status: "failed" }),
+        regexRules: [{ pattern: "hello", model: "frontier" }],
+        fallbackToRegex: false,
+        defaultTier: "economical",
+      }));
+      const result = await p.classify("hello");
+      assert.equal(result.kind, "fallback");
+      if (result.kind === "fallback") assert.equal(result.tier, "economical");
     });
 
     it("falls through to default when no rule matches", async () => {

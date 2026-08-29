@@ -717,9 +717,17 @@ async function handleDiscoveryReconcile(
     log(ctx, "run in TUI or use --write to persist", "warning");
     return;
   }
+  const confirmLines = [`Add ${diff.added.length} and remove ${diff.removed.length} discovery-managed model(s)?`];
+  if (diff.added.length > 0) {
+    confirmLines.push("", "Added:", ...diff.added.map((item) => `  + ${item.model} -> ${item.tier}`));
+  }
+  if (diff.removed.length > 0) {
+    confirmLines.push("", "Removed:", ...diff.removed.map((item) => `  - ${item.model} <- ${item.tier}`));
+  }
+
   const ok = writeWithoutPrompt || await ctx.ui.confirm(
     "Write config update?",
-    `Add ${diff.added.length} and remove ${diff.removed.length} discovery-managed model(s)?`,
+    confirmLines.join("\n"),
   );
   if (!ok) {
     log(ctx, "config not written");

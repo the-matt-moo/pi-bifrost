@@ -114,14 +114,14 @@
     },
     "compactBeforeSwitch": {
       "type": "boolean",
-      "description": "Auto-compact conversation history before switching models, so the post-switch cache miss re-bills fewer tokens. Only fires when context usage crosses compactBeforeSwitchThreshold.",
-      "default": false
+      "description": "Auto-compact conversation history before switching models, so the post-switch cache miss re-bills fewer tokens. The threshold is projected against the target model's context window.",
+      "default": true
     },
     "compactBeforeSwitchThreshold": {
       "type": "number",
       "minimum": 1,
       "maximum": 100,
-      "description": "Context-window percent above which to compact before a model switch.",
+      "description": "Target model context-window percent above which to compact before a model switch.",
       "default": 60
     },
     "cache": {
@@ -350,8 +350,8 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 100,
-          "description": "Max output tokens for the classifier. Keep it low \u2014 only need the category name back.",
-          "default": 20
+          "description": "Max output tokens for the classifier. Keep it low \u2014 only need the category and optional confidence back.",
+          "default": 8
         },
         "temperature": {
           "type": "number",
@@ -375,25 +375,25 @@
         "cooldownSeconds": {
           "type": "number",
           "minimum": 0,
-          "description": "Temporary cooldown after a classifier model fails or returns an invalid tier.",
+          "description": "Temporary cooldown after a classifier transport or provider failure. Valid rejections fall through without retrying or cooling down the model.",
           "default": 60
         },
         "fallbackToRegex": {
           "type": "boolean",
-          "description": "Fall back to regex rules when the classifier fails or returns an unknown category.",
+          "description": "Fall back to regex tier rules when the classifier fails or rejects a result. Direct model-reference rules still short-circuit before classification.",
           "default": true
         },
         "confidenceThreshold": {
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Minimum LLM-reported confidence (0-1) required to accept a classifier tier. Lower-confident classifications fall through to regex/fallback, keeping the current model stable and reducing model-switch cache misses. 0 accepts any confidently-tagged tier.",
-          "default": 0
+          "description": "Minimum LLM-reported confidence (0-1) required to accept a classifier tier. Missing or lower confidence falls through to regex/default, keeping the current model stable and reducing model-switch cache misses.",
+          "default": 0.4
         },
         "systemPrompt": {
           "type": "string",
           "description": "Custom system prompt for the classifier. Override to change how categories are presented to the LLM.",
-          "default": "You are a routing classifier. Pick the category that best matches the task complexity and type. Respond with only the exact category name. No explanation, no punctuation."
+          "default": "You are a routing classifier. Follow the requested output format exactly."
         }
       }
     },

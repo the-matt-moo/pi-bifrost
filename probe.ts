@@ -26,7 +26,7 @@ export interface ProbeResult {
 const PROBE_PROMPT = "1+1=";
 export const PROBE_PROMPT_TEXT = PROBE_PROMPT;
 const PROBE_TIMEOUT_MS = 10_000;
-const PROBE_MAX_TOKENS = 16;
+const PROBE_MAX_TOKENS = 4;
 export const PROBE_RESULT_TTL_MS = 60 * 60_000;
 
 export interface ProbeOptions {
@@ -162,6 +162,7 @@ async function probeOne(
       const stream = provider.streamSimple(
         model,
         {
+          systemPrompt: "Reply only with 2.",
           messages: [{ role: "user", content: PROBE_PROMPT, timestamp: Date.now() }],
         },
         {

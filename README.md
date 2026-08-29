@@ -38,8 +38,8 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Classifier accuracy | Tier names only in LLM prompt | Auto-generated tier descriptions from regex rules injected into classifier prompt |
 | Multi-turn routing | Each prompt classified independently | Session momentum: 2+ same-tier classifications carry forward; topic-change detection resets momentum |
 | Routing latency | Sequential: cache miss → LLM → regex | Stale-while-revalidate registry updates, bounded classifier attempts, failure cooldowns, indexed cache lookup, and complexity short-circuits keep prompt routing off slow maintenance paths |
-| Classifier confidence | Tier-only LLM output | `classifier.confidenceThreshold` rejects low-confidence picks so routing falls through to regex/default instead of switching models unnecessarily |
-| Cache-miss cost | Full conversation re-billed after switch | `compactBeforeSwitch` compacts history before `pi.setModel()` once context usage crosses `compactBeforeSwitchThreshold`, shrinking the re-bill |
+| Classifier confidence | Tier-only LLM output | `classifier.confidenceThreshold` requires an explicit score and rejects missing/low-confidence picks so routing falls through to regex/default without retrying another classifier |
+| Cache-miss cost | Full conversation re-billed after switch | Every automatic switch projects token usage against the target model window, completes compaction before `pi.setModel()`, and retains the current model if compaction fails |
 | Self-correction | Static cache, no feedback | Demotion tracking on manual overrides; cache entries auto-escalate tier after 3 demotions |
 | Cold start | Empty cache → every prompt hits LLM | Cache warm-start seeds entries from regex rules on first use |
 
@@ -55,11 +55,11 @@ The improved pipeline addresses each of these gaps:
 
 3. **Tier descriptions** tell the classifier LLM what each tier actually handles (auto-generated from your regex rules), instead of just sending bare tier names. This improves accuracy for ambiguous prompts.
 
-4. **Bounded classification** limits classifier attempts to a shared wall-clock budget. Failed classifier models enter a short cooldown, `confidenceThreshold` rejects weak tier picks, and `auto` mode does not resend completed invalid direct responses through a subprocess.
+4. **Bounded classification** limits classifier attempts to a shared wall-clock budget and classifier input to 8,000 characters. Failed transports enter a short cooldown; valid rejections immediately fall through without another classifier call. `confidenceThreshold` rejects missing or weak scores, and `auto` mode does not resend completed direct responses through a subprocess.
 
 5. **Self-correction** tracks when you manually override a routing decision. After 3 such signals on the same prompt pattern, the cache entry's tier auto-escalates.
 
-6. **Pre-switch compaction** trims history before a model change when context usage is high, so the inevitable cache miss re-bills fewer tokens.
+6. **Context-safe switching** projects current tokens against the target model's context window for normal routes, quota handoffs, and retries. When the configured threshold is crossed, Bifrost waits for compaction before switching; failure keeps the current model and reports why.
 
 7. **Warm start and indexed lookup** pre-seed common patterns and keep exact/fuzzy cache lookup allocation low. Cache writes are deferred and coalesced so disk I/O does not block prompt routing.
 
@@ -171,7 +171,7 @@ Narrow discovery scope when needed:
 | `/bifrost` | Dashboard with mode, model, and quick actions |
 | `/bifrost init [--force]` | Probe models and generate config; fresh successful probes are reused for one hour unless forced |
 | `/bifrost on` / `off` | Enable or disable routing |
-| `/bifrost pin` / `unpin` | Lock current model for this session; classified switches auto-pin to prevent context churn, and exhausted fresh quota automatically unpins and switches to a comparable scoped model (see `keys` config for shortcuts) |
+| `/bifrost pin` / `unpin` | Lock the main-session model; automatic routes (including regex and fallback) auto-pin, while manual overrides, clearly unrelated topics, or unavailable models can switch it (subagents remain independent; see `keys` config for shortcuts) |
 | `/bifrost silence` / `unsilence` | Suppress or restore console output |
 | `/bifrost preview <prompt>` | See model routing, thinking level, and concise reasons without sending |
 | `/bifrost reload` | Reload config after manual edits |
@@ -283,10 +283,15 @@ Classifier latency controls are optional and backward-compatible:
     ],
     "timeoutMs": 10000,
     "maxAttempts": 2,
-    "cooldownSeconds": 60
+    "cooldownSeconds": 60,
+    "maxTokens": 8,
+    "confidenceThreshold": 0.4,
+    "fallbackToRegex": true
   }
 }
 ```
+
+`fallbackToRegex: false` skips tier regex fallback after classifier failure or rejection; direct model-reference rules still short-circuit before classification. Pre-switch compaction is enabled by default at 60% of the target model's context window.
 
 Prompt-derived thinking is disabled by default. Set `"thinking": { "mode": "advisory" }` to log recommendations without changing Pi's level, or use `"mode": "apply"` to opt into automatic level changes. Manual thinking-level changes pin the feature for the session. See the [full config reference](docs/) and [examples/](examples/) for advanced options including routing rules, classifier setup, reliability tuning, and quota-aware routing.
 
