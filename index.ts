@@ -389,6 +389,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const wasPinned = state.pinned || state.thinkingPinned;
       state.pinned = false;
       state.thinkingPinned = false;
+      state.thinkingMode = "apply";
       state.saveModeState();
       syncBifrostModeStatus(ctx, state);
       clearBifrostWidgets(ctx);
