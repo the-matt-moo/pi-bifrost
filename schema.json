@@ -309,8 +309,16 @@
           "default": true
         },
         "model": {
-          "type": "string",
-          "description": "Model pattern for the classifier. Use the cheapest model you trust \u2014 each classification costs tokens. Example: 'ollama/qwen2.5-coder:latest'"
+          "anyOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ],
+          "description": "Primary classifier model pattern(s). Use the cheapest model you trust — each classification costs tokens. If you pass an array, items are tried in order. Example: 'ollama/qwen2.5-coder:latest'"
+        },
+        "fallbackModels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ordered fallback classifier model patterns tried after 'model' when the classifier is unreachable or exhausted."
         },
         "endpoint": {
           "type": "string",

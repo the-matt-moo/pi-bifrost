@@ -2,6 +2,30 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.3 - 28-08-2026
+
+### Fixed
+- Stop tracking Graphify's machine-local scan-root state; it is now ignored so clones remain portable.
+
+## 4.5.2 - 28-08-2026
+
+### Added
+- Subcommand `/bifrost add-model [<model-key>]` to probe a model first, then add it to settings.json `enabledModels`, mark it as a scoped model in `bifrost.json` discovery metadata, prompt the user to place it in one or more existing categories, reload the configuration, and refresh the model registry.
+- Classifier config now supports ordered `fallbackModels`, so Bifrost can try several classifier candidates before dropping to regex or default routing.
+- Subcommand `/bifrost remove-model <model-key>` to remove a model from settings.json `enabledModels`, all bifrost.json tier lists, and discovery metadata, with registry refresh.
+
+## 4.4.3
+
+### Fixed
+- Models from providers with exhausted weekly quota are now preemptively skipped during routing regardless of strategy. Previously quota filtering only affected `subscription_balance` and `subscription_preferred` strategies; models from drained providers could still be selected by `first`, `cheapest`, or `fastest` strategies.
+- Broadened `isRetryableProviderLimit` regex to catch more error formats (`limit reached`, `limit exceeded`, `quota_exceeded`, `rate_limit`, `insufficient credits/balance/quota`) across both human-readable and JSON error messages so auto-retry fires reliably.
+
+### Added
+- `filterQuotaExhausted()` in routing — strips models from providers whose `weeklyRemainingFraction` is at or below `reservePercent`. Never removes all candidates (deadlock guard).
+- Quota-exhausted models appear in `SkippedCandidate[]` with reason `"quota_exhausted"`.
+
+## 4.4.2
+
 ## 4.4.1
 
 ### Removed

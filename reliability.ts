@@ -112,15 +112,15 @@ export function getCircuitState(
   };
 }
 
-/** Upstream 429s are transient pool exhaustion — use a short cooldown instead of the full circuit-breaker window. */
-const UPSTREAM_RATE_LIMIT_COOLDOWN_MS = 45_000;
+/** Any transient provider-side limit (429, rate limit, resource exhaustion, quota) — use a short cooldown instead of the full circuit-breaker window. */
+const TRANSIENT_LIMIT_COOLDOWN_MS = 45_000;
 
 export function isRetryableProviderLimit(reason: string): boolean {
-  return /\b429\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|request limit reached/i.test(reason);
+  return /\b429\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)|quota_exceeded|rate_limit|insufficient.*(?:quota|balance|credit)/i.test(reason);
 }
 
-function isUpstreamRateLimit(reason: string): boolean {
-  return /\b429\b/.test(reason) && /upstream|temporarily rate.?limit/i.test(reason);
+function isTransientProviderLimit(reason: string): boolean {
+  return isRetryableProviderLimit(reason);
 }
 
 function shouldOpenImmediately(source: string, reason: string): boolean {
@@ -142,10 +142,9 @@ export function recordModelFailure(
 
   const current = state.models[model] ?? { failures: [] };
   const wasTrial = current.trialActive;
-  const rateLimit = isUpstreamRateLimit(reason);
-  // Don't grow multiplier for transient upstream rate-limits — they aren't model failures.
-  const multiplier = rateLimit ? (current.cooldownMultiplier ?? 1) : (wasTrial ? (current.cooldownMultiplier ?? 1) * 2 : (current.cooldownMultiplier ?? 1));
-  const cooldownMs = rateLimit ? UPSTREAM_RATE_LIMIT_COOLDOWN_MS : resolved.cooldownMinutes * 60_000 * multiplier;
+  const rateLimited = isTransientProviderLimit(reason);
+  const multiplier = rateLimited ? (current.cooldownMultiplier ?? 1) : (wasTrial ? (current.cooldownMultiplier ?? 1) * 2 : (current.cooldownMultiplier ?? 1));
+  const cooldownMs = rateLimited ? TRANSIENT_LIMIT_COOLDOWN_MS : resolved.cooldownMinutes * 60_000 * multiplier;
   const failures = [...pruneFailures(current.failures, now, resolved.windowMinutes), now];
   const immediateOpen = shouldOpenImmediately(source, reason);
   const openUntil = immediateOpen || failures.length >= resolved.failureThreshold ? now + cooldownMs : current.openUntil;

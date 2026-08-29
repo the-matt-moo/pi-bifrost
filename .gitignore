@@ -9,4 +9,4 @@ screenshots/
 .pi-subagents/
 .plan/
 docs/adr/*
-docs/adr/*
+graphify-out/.graphify_root

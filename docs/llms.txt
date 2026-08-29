@@ -53,6 +53,8 @@ Supported strategies include `cheapest`, `cheapest_input`, `cheapest_output`, `l
 - `/bifrost pin` pauses routing.
 - `/bifrost unpin` resumes routing.
 - `/bifrost classifier off` disables LLM classification.
+- `/bifrost add-model <provider/model>` probes and adds a model.
+- `/bifrost remove-model <provider/model>` removes a model from config.
 - `/bifrost probe` checks model availability.
 - `/bifrost reload` reloads configuration.
 

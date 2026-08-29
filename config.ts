@@ -19,6 +19,8 @@ export interface DiscoveryConfig {
 export interface ClassifierConfig {
   enabled?: boolean;
   model?: string | string[];
+  /** Ordered fallback classifier models tried after `model`. */
+  fallbackModels?: string[];
   endpoint?: string;
   method?: ClassifierMethod;
   systemPrompt?: string;

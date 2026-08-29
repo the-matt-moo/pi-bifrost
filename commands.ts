@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
+import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -886,6 +886,281 @@ async function handlePreview(
   await uiResult(ctx, "Bifrost preview", lines);
 }
 
+async function handleAddModel(
+  args: string,
+  ctx: ExtensionContext,
+  state: BifrostState,
+): Promise<void> {
+  clearBifrostWidgets(ctx);
+
+  const rawInput = args.slice("add-model".length).trim();
+  let key = rawInput;
+  let model = undefined as ReturnType<typeof ctx.modelRegistry.getAll>[number] | undefined;
+  const allModels = ctx.modelRegistry.getAll();
+  const lower = rawInput.toLowerCase();
+
+  if (rawInput.includes("/")) {
+    const [provider, ...idParts] = rawInput.split("/");
+    const id = idParts.join("/");
+    model = ctx.modelRegistry.find(provider, id) ?? allModels.find((m) => modelKey(m).toLowerCase() === rawInput.toLowerCase());
+  } else if (rawInput) {
+    const exactMatches = allModels.filter((m) => m.id.toLowerCase() === lower);
+    if (exactMatches.length === 1) {
+      model = exactMatches[0];
+      key = modelKey(model);
+    } else {
+      const similarMatches = allModels.filter((m) => {
+        const k = modelKey(m).toLowerCase();
+        return k.includes(lower) || m.id.toLowerCase().includes(lower) || m.provider.toLowerCase().includes(lower);
+      });
+      if (similarMatches.length === 1) {
+        model = similarMatches[0];
+        key = modelKey(model);
+      } else if (ctx.hasUI && similarMatches.length > 1) {
+        const picked = await ctx.ui.select(
+          `Clarify model "${rawInput}"`,
+          similarMatches.map((m) => modelKey(m)),
+        );
+        if (!picked) {
+          log(ctx, "Cancelled");
+          return;
+        }
+        model = similarMatches.find((m) => modelKey(m) === picked);
+        if (model) key = modelKey(model);
+      }
+    }
+  }
+
+  if (!model) {
+    if (!ctx.hasUI) {
+      log(ctx, "Usage: /bifrost add-model <provider/model>", "warning");
+      return;
+    }
+    const picked = await ctx.ui.input("Enter full provider/model key:");
+    if (!picked) {
+      log(ctx, "Cancelled");
+      return;
+    }
+    const normalized = picked.trim();
+    const [provider, ...idParts] = normalized.split("/");
+    const id = idParts.join("/");
+    model = normalized.includes("/") ? ctx.modelRegistry.find(provider, id) : undefined;
+    if (!model) {
+      log(ctx, `Couldn't resolve "${normalized}". Please use provider/model.`, "warning");
+      return;
+    }
+    key = modelKey(model);
+  }
+
+  uiBusy(ctx, `Probing ${key}...`);
+  try {
+    const { results } = await runProbe(ctx, undefined, [model], { force: true });
+    const probe = results[0];
+    if (!probe || probe.status !== "ok") {
+      log(ctx, `Model "${key}" must pass probe before adding${probe?.error ? `: ${probe.error}` : ` (status: ${probe?.status ?? "unknown"})`}.`, "error");
+      return;
+    }
+  } finally {
+    uiDone(ctx);
+  }
+
+  // Add to settings.json (enabledModels)
+  try {
+    const settingsPath = join(getAgentDir(), "settings.json");
+    if (existsSync(settingsPath)) {
+      const settings = readJson<{ enabledModels?: string[] }>(settingsPath);
+      if (settings) {
+        settings.enabledModels = settings.enabledModels ?? [];
+        if (!settings.enabledModels.includes(key)) {
+          settings.enabledModels.push(key);
+          writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+          log(ctx, `Added "${key}" to enabledModels in settings.json`);
+        } else {
+          log(ctx, `"${key}" is already in enabledModels in settings.json`);
+        }
+      }
+    }
+  } catch (err) {
+    log(ctx, `Failed to update settings.json: ${err}`, "warning");
+  }
+
+  // Add to active bifrost.json
+  const configPath = join(process.cwd(), CONFIG_DIR_NAME, "bifrost.json");
+  const current = readJson<BifrostConfig>(configPath) ?? state.config;
+
+  const categories = Object.keys(current.models ?? {});
+  if (categories.length === 0) {
+    log(ctx, "No categories found in bifrost config; add categories first", "error");
+    return;
+  }
+
+  const selectedCategories = new Set<string>();
+  if (ctx.hasUI) {
+    while (true) {
+      const menuOptions = categories.map((cat) => {
+        const checked = selectedCategories.has(cat) ? "[x]" : "[ ]";
+        return `${checked} ${cat}`;
+      });
+      menuOptions.push("[Done]");
+      const choice = await ctx.ui.select(
+        `Select categories to place "${key}" in (chosen: ${selectedCategories.size}):`,
+        menuOptions,
+      );
+      if (!choice || choice === "[Done]") {
+        break;
+      }
+      const catName = choice.slice(4);
+      if (selectedCategories.has(catName)) {
+        selectedCategories.delete(catName);
+      } else {
+        selectedCategories.add(catName);
+      }
+    }
+  } else {
+    // If not in TUI/UI, choose the default category
+    const defCat = current.default ?? "general";
+    if (categories.includes(defCat)) {
+      selectedCategories.add(defCat);
+      log(ctx, `Non-interactive mode: placing model in default category "${defCat}"`);
+    } else if (categories.length > 0) {
+      selectedCategories.add(categories[0]);
+      log(ctx, `Non-interactive mode: placing model in category "${categories[0]}"`);
+    }
+  }
+
+  if (selectedCategories.size === 0) {
+    log(ctx, "Operation cancelled: no categories selected");
+    return;
+  }
+
+  current.models = current.models ?? {};
+  for (const cat of selectedCategories) {
+    const list = current.models[cat];
+    if (Array.isArray(list)) {
+      if (!list.includes(key)) {
+        list.push(key);
+      }
+    } else if (typeof list === "string") {
+      current.models[cat] = [list, key];
+    } else {
+      current.models[cat] = [key];
+    }
+  }
+
+  // Mark as scoped model
+  current.discovery = current.discovery ?? { managed: {} };
+  current.discovery.managed = current.discovery.managed ?? {};
+  const managedSources = current.discovery.managed[key] ?? [];
+  if (!managedSources.includes("scoped")) {
+    current.discovery.managed[key] = [...managedSources, "scoped"];
+  }
+
+  // Write and reload config
+  writeAndReloadConfig(current, state);
+  log(ctx, `Updated bifrost.json categories for "${key}"`);
+
+  // Run registry refresh
+  uiBusy(ctx, "Refreshing registry...");
+  try {
+    state.forceRegistryRefresh = true;
+    await state.refreshRegistry(ctx);
+  } catch (err) {
+    log(ctx, `Registry refresh failed: ${err}`, "warning");
+  }
+  uiDone(ctx);
+
+  log(ctx, `Successfully added "${key}" to categories: ${[...selectedCategories].join(", ")}`);
+}
+
+async function handleRemoveModel(
+  args: string,
+  ctx: ExtensionContext,
+  state: BifrostState,
+): Promise<void> {
+  clearBifrostWidgets(ctx);
+
+  let rawInput = args.slice("remove-model".length).trim();
+  if (!rawInput) {
+    if (!ctx.hasUI) {
+      log(ctx, "Usage: /bifrost remove-model <provider/model>", "warning");
+      return;
+    }
+    const picked = await ctx.ui.input("Enter full provider/model key to remove:");
+    if (!picked) {
+      log(ctx, "Cancelled");
+      return;
+    }
+    rawInput = picked.trim();
+  }
+
+  // Resolve to exact model key
+  const allModels = ctx.modelRegistry.getAll();
+  let model = allModels.find((m) => modelKey(m).toLowerCase() === rawInput.toLowerCase());
+  if (!model) {
+    log(ctx, `Model "${rawInput}" not found in registry.`, "error");
+    return;
+  }
+  const key = modelKey(model);
+
+  // Check if model is in scoped models (enabledModels)
+  const settingsPath = join(getAgentDir(), "settings.json");
+  let wasInEnabledModels = false;
+  if (existsSync(settingsPath)) {
+    const settings = readJson<{ enabledModels?: string[] }>(settingsPath);
+    if (settings?.enabledModels?.includes(key)) {
+      wasInEnabledModels = true;
+      settings.enabledModels = settings.enabledModels.filter((k) => k !== key);
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      log(ctx, `Removed "${key}" from enabledModels in settings.json`);
+    }
+  }
+
+  // Check if model is in bifrost.json (models and discovery.managed)
+  const configPath = join(process.cwd(), CONFIG_DIR_NAME, "bifrost.json");
+  const current = readJson<BifrostConfig>(configPath) ?? state.config;
+
+  let wasInBifrost = false;
+  let removedFromCategories: string[] = [];
+  const models = current.models ?? {};
+  for (const [cat, modelList] of Object.entries(models)) {
+    const list = Array.isArray(modelList) ? modelList : [modelList];
+    const idx = list.indexOf(key);
+    if (idx >= 0) {
+      wasInBifrost = true;
+      list.splice(idx, 1);
+      current.models![cat] = list.length === 1 ? list[0] : list;
+      removedFromCategories.push(cat);
+    }
+  }
+
+  // Remove from discovery.managed
+  if (current.discovery?.managed?.[key]) {
+    wasInBifrost = true;
+    delete current.discovery.managed[key];
+  }
+
+  if (!wasInEnabledModels && !wasInBifrost) {
+    log(ctx, `Model "${key}" is not currently scoped or used by Bifrost.`, "error");
+    return;
+  }
+
+  // Write and reload config
+  writeAndReloadConfig(current, state);
+  log(ctx, `Updated bifrost.json: removed "${key}" from categories: ${removedFromCategories.join(", ") ?? "(none)"}`);
+
+  // Run registry refresh
+  uiBusy(ctx, "Refreshing registry...");
+  try {
+    state.forceRegistryRefresh = true;
+    await state.refreshRegistry(ctx);
+  } catch (err) {
+    log(ctx, `Registry refresh failed: ${err}`, "warning");
+  }
+  uiDone(ctx);
+
+  log(ctx, `Successfully removed "${key}" from Bifrost config`);
+}
+
 // ── Command type ────────────────────────────────────────────
 
 type CommandFn = (args: string, ctx: ExtensionContext) => void | Promise<void>;
@@ -933,6 +1208,8 @@ export const BIFROST_COMMAND_OPTIONS: readonly CommandSpec[] = [
   { value: "debug", description: "Show config and routing state" },
   { value: "doctor", description: "Validate config against available models" },
   { value: "preview", description: "Preview routing for a prompt", argumentHint: "<prompt>" },
+  { value: "add-model", description: "Add model to scoped list and categories", argumentHint: "[<model-key>]" },
+  { value: "remove-model", description: "Remove model from scoped list and configs", argumentHint: "<model-key>" },
 ] as const;
 
 export function getBifrostCommandCompletions(prefix: string) {
@@ -961,6 +1238,8 @@ function dashboardCommands(state: Pick<BifrostState, "enabled" | "pinned" | "sil
     "probe",
     "init",
     "refresh",
+    "add-model",
+    "remove-model",
     "classifier status",
     "reload",
   ];
@@ -1312,6 +1591,8 @@ export function createCommandRouter(
     }),
 
     prefix("preview", "Preview routing for a prompt", (args, ctx) => handlePreview(args, ctx, state), "<prompt>"),
+    prefix("add-model", "Add model to scoped list and categories", (args, ctx) => handleAddModel(args, ctx, state), "[<model-key>]"),
+    prefix("remove-model", "Remove model from scoped list and configs", (args, ctx) => handleRemoveModel(args, ctx, state), "<model-key>"),
   ];
 
   return async (args: string, ctx: ExtensionContext) => {

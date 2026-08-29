@@ -352,8 +352,40 @@ export function resolveModel(
 
 export interface SkippedCandidate {
   key: string;
-  reason: "open_circuit";
+  reason: "open_circuit" | "quota_exhausted";
   openUntil?: number;
+}
+
+/** Remove models from providers whose weekly quota is exhausted.
+ *  Only applies when quota telemetry is fresh (within staleMinutes).
+ *  Never removes ALL candidates — that would deadlock the user. */
+export function filterQuotaExhausted(
+  candidates: Model<Api>[],
+  quota: QuotaSnapshot | undefined,
+  quotaConfig: QuotaRoutingConfig | undefined,
+  now: number,
+): { candidates: Model<Api>[]; skipped: SkippedCandidate[] } {
+  if (!quota) return { candidates, skipped: [] };
+  const fresh = now - quota.fetchedAt < (quotaConfig?.staleMinutes ?? 15) * 60_000;
+  if (!fresh) return { candidates, skipped: [] };
+
+  const reserve = quotaConfig?.reservePercent ?? 0.03;
+  const skipped: SkippedCandidate[] = [];
+  const filtered = candidates.filter((model) => {
+    if (billingClass(model) !== "subscription") return true;
+    const remaining = quota.byProvider[model.provider]?.weeklyRemainingFraction;
+    // No data: keep the model (conservative — unmeasured means unblocked)
+    if (typeof remaining !== "number") return true;
+    if (remaining <= reserve) {
+      skipped.push({ key: modelKey(model), reason: "quota_exhausted" });
+      return false;
+    }
+    return true;
+  });
+
+  // Don't starve the user — keep at least one candidate
+  if (filtered.length === 0) return { candidates, skipped: [] };
+  return { candidates: filtered, skipped };
 }
 
 export interface HealthyModelResolution {
@@ -387,11 +419,12 @@ export function resolveHealthyModel(
 ): HealthyModelResolution {
   const candidates = resolvedCandidates ? [...resolvedCandidates] : findCandidates(ctx, pattern);
   if (!reliabilityState || reliabilityConfig?.enabled === false) {
+    const quotaFiltered = filterQuotaExhausted(candidates, quota, quotaConfig, now);
     return {
-      selected: selectModel(candidates, strategy, quota, quotaConfig, now),
+      selected: selectModel(quotaFiltered.candidates, strategy, quota, quotaConfig, now),
       candidates,
       healthyCandidates: candidates,
-      skipped: [],
+      skipped: quotaFiltered.skipped,
     };
   }
 
@@ -406,11 +439,16 @@ export function resolveHealthyModel(
     healthyCandidates.push(candidate);
   }
 
+  // Filter out models from providers with exhausted weekly quota.
+  // Guard: if all candidates would be removed, keep the original set.
+  const quotaFiltered = filterQuotaExhausted(healthyCandidates, quota, quotaConfig, now);
+  const allSkipped = [...skipped, ...quotaFiltered.skipped];
+
   return {
-    selected: selectModel(healthyCandidates, strategy, quota, quotaConfig, now),
+    selected: selectModel(quotaFiltered.candidates, strategy, quota, quotaConfig, now),
     candidates,
     healthyCandidates,
-    skipped,
+    skipped: allSkipped,
   };
 }
 

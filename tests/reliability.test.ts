@@ -23,6 +23,9 @@ describe("reliability", () => {
       "ResourceExhausted: Worker local total request limit reached",
       "Quota reached. Please wait 3h",
       "This request would exceed your account's rate limit",
+      "Error: Codex error: The usage limit has been reached",
+      '{"error":{"type":"rate_limit_error","message":"limit exceeded"}}',
+      "Insufficient credits. Please add funds.",
     ]) {
       assert.equal(isRetryableProviderLimit(reason), true, reason);
     }

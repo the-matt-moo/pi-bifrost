@@ -24,6 +24,7 @@ async function runPi(command, cwd = process.cwd()) {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
       cwd,
+      shell: process.platform === "win32",
     });
 
     let stdout = "";

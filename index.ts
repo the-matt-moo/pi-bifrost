@@ -67,15 +67,28 @@ function scopedCandidates(
   return findCandidates(ctx, pattern).filter((model) => scoped.has(modelKey(model)));
 }
 
+function classifierModelPatterns(config: BifrostConfig): string[] {
+  const primary = config.classifier?.model;
+  const patterns = [
+    ...(Array.isArray(primary) ? primary : primary ? [primary] : []),
+    ...(config.classifier?.fallbackModels ?? []),
+  ];
+  return [...new Set(patterns.filter(Boolean))];
+}
+
 function resolveClassifierModels(
   ctx: ExtensionContext,
   config: BifrostConfig,
 ): ClassifierModel[] {
-  const pattern = config.classifier?.model;
-  if (!pattern) return [];
-  return scopedCandidates(ctx, pattern)
-    .slice(0, 3)
-    .map((model) => ({ kind: "registry" as const, model }));
+  const patterns = classifierModelPatterns(config);
+  if (patterns.length === 0) return [];
+
+  const endpoint = config.classifier?.endpoint;
+  if (endpoint) {
+    return patterns.map((id) => endpointClassifier(id, endpoint));
+  }
+
+  return scopedCandidates(ctx, patterns).map((model) => ({ kind: "registry" as const, model }));
 }
 
 function endpointClassifier(id: string, endpoint: string): ClassifierModel {
@@ -98,19 +111,9 @@ function buildPipeline(
 
   // Resolve classifier models once at pipeline construction.
   // If classifier is disabled, pass empty array — pipeline skips LLM stage.
-  let classifierModels: ClassifierModel[] = [];
-  if (classifierEnabled && tiers.length > 0) {
-    const classifierEndpoint = config.classifier?.endpoint;
-    if (classifierEndpoint) {
-      const rawModel = config.classifier?.model;
-      const modelId = Array.isArray(rawModel)
-        ? rawModel[0]
-        : (rawModel ?? "classifier");
-      classifierModels = [endpointClassifier(modelId, classifierEndpoint)];
-    } else {
-      classifierModels = resolveClassifierModels(ctx, config);
-    }
-  }
+  const classifierModels = classifierEnabled && tiers.length > 0
+    ? resolveClassifierModels(ctx, config)
+    : [];
 
   const rules = loadRules(process.cwd(), config);
   const tierDescriptions = generateTierDescriptions(rules, tiers);

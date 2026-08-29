@@ -136,6 +136,8 @@ From source:
 pi install git:github.com/the-matt-moo/pi-bifrost
 ```
 
+For local development, configure Pi to load your cloned package directory in your machine-local `settings.json`. Do not commit machine-specific package paths.
+
 ## Setup
 
 Run once after install:
@@ -172,6 +174,8 @@ Narrow discovery scope when needed:
 | `/bifrost probe [--scoped] [--free] [--force]` | Check model availability; reuse fresh successes unless forced |
 | `/bifrost doctor` | Validate config against available models |
 | `/bifrost classifier on` / `off` | Toggle LLM classifier |
+| `/bifrost add-model [<model-key>]` | Probe the model first, then add it to settings.json enabledModels, mark it as scoped in config, prompt for category placement, and refresh registry |
+| `/bifrost remove-model <model-key>` | Remove model from settings.json enabledModels, all bifrost.json tiers, and discovery metadata; refresh registry |
 | `/bifrost thinking [off\|advisory\|apply\|status]` | Inspect or set prompt-derived thinking mode |
 
 Active advisory/apply mode appears immediately in Bifrost status as `think:advisory` or `think:apply`.
@@ -212,7 +216,7 @@ For every prompt, Bifrost executes a staged evaluation:
 2. **Direct-model Regex Rules**: Explicit provider/model rules bypass tier classification.
 3. **Cache & Session Momentum**: Indexed fuzzy matching reuses successful classifications; related follow-ups retain the dominant recent tier.
 4. **Complexity Heuristic**: Obvious short requests route to `quick`; large or multi-file requests route to `frontier` without an LLM call.
-5. **Bounded LLM Classifier**: Attempts at most two healthy classifier models within a 10-second total budget by default. Failed models cool down for 60 seconds.
+5. **Bounded LLM Classifier**: Tries the classifier model and its ordered fallbacks within a 10-second total budget by default. Failed models cool down for 60 seconds.
 6. **Tier Regex Rules**: The already-computed regex result is used when classification does not return a valid tier.
 7. **Default Tier**: If all else fails, Bifrost uses the configured default.
 
@@ -264,6 +268,10 @@ Classifier latency controls are optional and backward-compatible:
 {
   "classifier": {
     "model": "openai-codex/gpt-5.4-mini",
+    "fallbackModels": [
+      "anthropic/claude-haiku-4-5",
+      "antigravity/gemini-3.6-flash"
+    ],
     "timeoutMs": 10000,
     "maxAttempts": 2,
     "cooldownSeconds": 60
