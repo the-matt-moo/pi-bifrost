@@ -2,7 +2,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { fileURLToPath } from "node:url";
 import { classifyWithLLM as invokeClassifier, type ClassifierModel } from "./classifier.js";
-import { prepareContextSwitch } from "./context-switch.js";
+
 import {
   autoPinSource,
   createPipeline,
@@ -272,14 +272,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     flushCacheSave: cacheWriter.flush,
   };
 
-  function prepareSwitch(ctx: ExtensionContext, model: Model<Api>): Promise<boolean> {
-    return prepareContextSwitch(ctx, model, {
-      enabled: state.config.compactBeforeSwitch ?? true,
-      thresholdPercent: state.config.compactBeforeSwitchThreshold ?? 60,
-      targetLabel: modelKey(model),
-      notify: (message, level) => log(ctx, message, level),
-    });
-  }
+
 
   function inferPattern(ctx: ExtensionContext, tier: string): string[] {
     const raw = state.config.models?.[tier];
@@ -504,7 +497,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }
 
     const nextKey = modelKey(next);
-    if (!(await prepareSwitch(ctx, next))) return;
     selfSelecting = true;
     let switched = false;
     let switchError: unknown;
@@ -641,7 +633,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
           now,
         );
         if (replacement) {
-          if (!(await prepareSwitch(ctx, replacement))) return defaultAction;
           selfSelecting = true;
           let switched = false;
           try {
@@ -848,14 +839,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
       uiBusy(ctx, `Bifrost routing to ${modelKey(model)}...`);
       setBifrostWorkingMessage(ctx, `Bifrost routing to ${modelKey(model)}...`);
-
-      if (!(await prepareSwitch(ctx, model))) {
-        uiDone(ctx);
-        setBifrostWorkingMessage(ctx, undefined);
-        syncBifrostModeStatus(ctx, state);
-        endInput({ model: modelKey(ctx.model), switchSkipped: "context_preservation" });
-        return defaultAction;
-      }
 
       selfSelecting = true;
       const endSwitch = debugMeasure("input", "setModel");

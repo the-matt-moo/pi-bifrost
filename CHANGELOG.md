@@ -2,6 +2,19 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.12 - 30-08-2026
+
+### Removed
+- Context-preservation compaction logic (`compactBeforeSwitch`, `prepareContextSwitch`, context-switch.ts).
+- Bifrost now relies on pi harness native compaction behavior for context management.
+
+## 4.5.11 - 30-08-2026
+
+### Changed
+- Context-preservation compaction disabled by default (`compactBeforeSwitch: false`).
+- Default threshold increased from 60% to 85% for users who enable the feature.
+- Reduces aggressive mid-session compaction that invalidates context-mode FTS5 cache.
+
 ## 4.5.10 - 29-08-2026
 
 ### Added
