@@ -21,9 +21,6 @@
     "maxTokens": 8
   },
 
-  "compactBeforeSwitch": true,
-  "compactBeforeSwitchThreshold": 60,
-
   "cache": {
     "enabled": true,
     "maxEntries": 500,

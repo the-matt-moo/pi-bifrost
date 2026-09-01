@@ -71,11 +71,6 @@ export interface BifrostConfig {
   discovery?: DiscoveryConfig;
   quotaRouting?: QuotaRoutingConfig;
   thinking?: ThinkingConfig;
-  /** Auto-compact conversation history before switching models, so the
-   *  post-switch cache miss re-bills fewer tokens. */
-  compactBeforeSwitch?: boolean;
-  /** Context-window percent (0-100) above which to compact before a switch. */
-  compactBeforeSwitchThreshold?: number;
 }
 
 export const DEFAULT_RULES: RouteRule[] = [
@@ -301,16 +296,6 @@ export function validateConfig(
       (!Number.isFinite(classifier.confidenceThreshold) || classifier.confidenceThreshold < 0 || classifier.confidenceThreshold > 1)) {
     issues.push({ severity: "error", message: `Classifier confidenceThreshold must be between 0 and 1, got ${classifier.confidenceThreshold}.` });
   }
-  if (config.compactBeforeSwitchThreshold !== undefined && config.compactBeforeSwitch === false) {
-    issues.push({ severity: "warning", message: "compactBeforeSwitchThreshold is ignored because compactBeforeSwitch is false." });
-  }
-  if (config.compactBeforeSwitch &&
-      config.compactBeforeSwitchThreshold !== undefined &&
-      (!Number.isFinite(config.compactBeforeSwitchThreshold) ||
-       config.compactBeforeSwitchThreshold < 1 || config.compactBeforeSwitchThreshold > 100)) {
-    issues.push({ severity: "error", message: `compactBeforeSwitchThreshold must be between 1 and 100, got ${config.compactBeforeSwitchThreshold}.` });
-  }
-
   const quota = config.quotaRouting;
   if (quota?.reservePercent !== undefined && (quota.reservePercent < 0 || quota.reservePercent > 1)) {
     issues.push({

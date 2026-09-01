@@ -54,7 +54,7 @@ function harness() {
       refresh: async () => {},
     },
   });
-  const thinkingPinned = () => /think:pinned/.test(status.get("bifrost") ?? "");
+  const thinkingPinned = () => /think:pinned/.test(status.get("bifrost-state") ?? "");
   return { handlers, notices, ctx, thinkingPinned };
 }
 

@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.13 - 31-08-2026
+
+### Removed
+- Stale compaction config, schema, docs, and tests left behind after removing pre-switch compaction.
+
 ## 4.5.12 - 30-08-2026
 
 ### Removed
