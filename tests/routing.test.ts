@@ -7,6 +7,8 @@ import {
   resolveModel,
   resolveHealthyModel,
   resolveModelWithFallback,
+  selectImageCapableModelFromGroups,
+  supportsImageInput,
   modelKey,
   modelCost,
   getStrategy,
@@ -32,6 +34,27 @@ describe("routing", () => {
       const m = makeModel("x", "y", 3);
       m.cost.output = 7;
       assert.equal(modelCost(m), 10);
+    });
+  });
+
+  describe("image support", () => {
+    it("detects image-capable input models", () => {
+      const textOnly = makeModel("a", "a");
+      const imageModel = { ...makeModel("b", "b"), input: ["text", "image"] as ("text" | "image")[] };
+      assert.equal(supportsImageInput(textOnly), false);
+      assert.equal(supportsImageInput(imageModel), true);
+    });
+
+    it("selects the first image-capable model across tier groups", () => {
+      const textOnly = makeModel("a", "a");
+      const imageModel = { ...makeModel("b", "b"), input: ["text", "image"] as ("text" | "image")[] };
+      const picked = selectImageCapableModelFromGroups([
+        { tier: "general", candidates: [textOnly], strategy: "first" },
+        { tier: "frontier", candidates: [textOnly, imageModel], strategy: "first" },
+      ]);
+      assert.ok(picked);
+      assert.equal(picked?.tier, "frontier");
+      assert.equal(modelKey(picked?.model), "b/b");
     });
   });
 

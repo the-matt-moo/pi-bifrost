@@ -37,7 +37,10 @@ import {
   isProviderQuotaExhausted,
   modelKey,
   resolveModelWithFallback,
+  resolveHealthyModel,
   selectComparableAvailableModel,
+  selectImageCapableModelFromGroups,
+  supportsImageInput,
 } from "./routing.js";
 import { QuotaStore } from "./quota.js";
 import { ReliabilityStore } from "./reliability-store.js";
@@ -286,6 +289,39 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       .map(({ model }) => model)
       .filter((model) => guessTier(model) === inferredTier)
       .map(modelKey);
+  }
+
+  function resolveImageCapableFallback(
+    ctx: ExtensionContext,
+    startTier: string,
+  ): { tier: string; model: Model<Api> } | undefined {
+    const tiers = Object.keys(state.config.models ?? {});
+    const startIndex = tiers.indexOf(startTier);
+    const searchTiers = startIndex >= 0 ? tiers.slice(startIndex) : tiers;
+    const now = Date.now();
+    const quota = quotaStore.getSnapshot();
+    const reliabilityState = state.reliabilityStore.getState();
+    const groups = searchTiers.map((tier) => {
+      const pattern = inferPattern(ctx, tier);
+      const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
+      const resolved = resolveHealthyModel(
+        ctx,
+        pattern,
+        strategy,
+        reliabilityState,
+        state.config.reliability,
+        now,
+        quota,
+        state.config.quotaRouting,
+      );
+      return {
+        tier,
+        candidates: resolved.healthyCandidates,
+        strategy,
+      };
+    });
+    const selected = selectImageCapableModelFromGroups(groups);
+    return selected ? { tier: selected.tier, model: selected.model } : undefined;
   }
 
   function decideThinking(
@@ -732,7 +768,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         : "fallback";
       const pinSource = autoPinSource(classification);
       const pattern = inferPattern(ctx, tier);
-      const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
+      let strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
       const defaultTier = state.config.default;
       const defaultPattern = defaultTier ? inferPattern(ctx, defaultTier) : undefined;
       const defaultStrategy = defaultTier
@@ -761,8 +797,18 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         quotaConfig: state.config.quotaRouting,
         requestedCandidates,
       });
-      const model = resolved.selected;
-      const selectedTier = resolved.selectedTier ?? tier;
+      let model = resolved.selected;
+      let selectedTier = resolved.selectedTier ?? tier;
+      let visionFallback = false;
+      if (model && event.images?.length && !supportsImageInput(model)) {
+        const fallback = resolveImageCapableFallback(ctx, selectedTier);
+        if (fallback) {
+          model = fallback.model;
+          selectedTier = fallback.tier;
+          strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, selectedTier);
+          visionFallback = true;
+        }
+      }
       const retryContext = {
         prompt: promptText,
         images: event.images ? [...event.images] : undefined,
@@ -876,6 +922,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
       const detail = [
         selectedTier !== tier ? `selected tier ${selectedTier}` : undefined,
+        visionFallback ? "vision-capable fallback" : undefined,
         resolved.fallbackReason,
         resolved.skipped.length > 0 ? `${resolved.skipped.length} skipped` : undefined,
       ].filter(Boolean).join(", ");

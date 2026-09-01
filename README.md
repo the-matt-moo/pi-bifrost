@@ -29,6 +29,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Credit spend policy | All candidates equally eligible | Subscription providers (Codex, Antigravity, Anthropic) preferred; `subscription_balance` blocks paid OpenRouter until subscriptions drain past `reservePercent`; `subscription_preferred` prioritizes subscription models entirely, falling back to free/unknown/paid-credit only when no subscription models are available |
 | Model discovery | Probes all Pi models | Adds `--scoped` (Pi enabled-models only, always included when requested regardless of discovery errors) and `--free` (top 5 OpenRouter free models by collection ranking, or top 5 fastest if ranking fetch fails) flags for `init` and `update`; `update --free` enforces the same cap |
 | Candidate scoping | Full registry | Classifier model lookup and tier inference filter candidates to Pi's scoped-model selection, preventing routing to models the user has not enabled |
+| Image prompts | Routed like text-only prompts | Prefers vision-capable models; if the selected tier cannot take images, Bifrost falls back to higher tiers with image support |
 | Pin quota safety | Manual pin remains until explicitly removed | A pinned model with fresh telemetry showing exhausted usage is automatically unpinned and switched to a same-tier scoped model from another provider with measured quota available; classified switches auto-pin to prevent context-loss churn from per-prompt model changes |
 | Reliability | Threshold-based circuit breaker | Any final runtime provider error immediately opens that model's circuit (including `ResourceExhausted`); next prompt selects the next healthy model in the same category, then falls back to the default category if needed |
 | Config reconciliation | `init` only | Adds `/bifrost update --scoped/--free` to preview and merge discovery results while preserving manual entries |
@@ -58,7 +59,9 @@ The improved pipeline addresses each of these gaps:
 
 5. **Self-correction** tracks when you manually override a routing decision. After 3 such signals on the same prompt pattern, the cache entry's tier auto-escalates.
 
-6. **Warm start and indexed lookup** pre-seed common patterns and keep exact/fuzzy cache lookup allocation low. Cache writes are deferred and coalesced so disk I/O does not block prompt routing.
+6. **Image capability fallback** checks image attachments after routing; if the chosen model cannot accept images, Bifrost walks higher tiers until it finds one that can.
+
+7. **Warm start and indexed lookup** pre-seed common patterns and keep exact/fuzzy cache lookup allocation low. Cache writes are deferred and coalesced so disk I/O does not block prompt routing.
 
 ## Statusline
 

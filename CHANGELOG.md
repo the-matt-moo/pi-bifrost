@@ -2,6 +2,14 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.14 - 01-09-2026
+
+### Added
+- Image prompts now prefer a vision-capable model and fall back to higher tiers when the selected tier cannot accept image input.
+
+### Changed
+- Routing now treats `model.input` as the capability source for image prompts.
+
 ## 4.5.13 - 31-08-2026
 
 ### Removed

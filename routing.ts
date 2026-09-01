@@ -24,6 +24,10 @@ export function modelKey(model: Model<Api> | undefined): string {
   return `${model.provider}/${model.id}`;
 }
 
+export function supportsImageInput(model: Model<Api>): boolean {
+  return model.input.includes("image");
+}
+
 /** Sum of input + output token costs per 1M tokens. Does not include cache read/write costs. */
 export function modelCost(model: Model<Api>): number {
   return model.cost.input + model.cost.output;
@@ -348,6 +352,25 @@ export function resolveModel(
   strategy: RoutingStrategy,
 ): Model<Api> | undefined {
   return selectModel(findCandidates(ctx, pattern), strategy);
+}
+
+export interface TierCandidateGroup {
+  tier: string;
+  candidates: Model<Api>[];
+  strategy: RoutingStrategy;
+}
+
+export function selectImageCapableModelFromGroups(
+  groups: readonly TierCandidateGroup[],
+): { tier: string; model: Model<Api> } | undefined {
+  for (const group of groups) {
+    const model = selectModel(
+      group.candidates.filter(supportsImageInput),
+      group.strategy,
+    );
+    if (model) return { tier: group.tier, model };
+  }
+  return undefined;
 }
 
 export interface SkippedCandidate {
