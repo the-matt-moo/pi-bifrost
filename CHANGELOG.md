@@ -2,6 +2,14 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.16 - 01-09-2026
+
+### Added
+- `keys.toggle` shortcut (e.g. `"toggle": "ctrl+p"`) toggles pin/unpin of the current model in one key. Unpinning also clears thinking pin and resumes `apply` mode.
+
+### Changed
+- Pinned models that return a retryable provider error (429 / rate limit) are now auto-unpinned immediately so the next prompt routes to a healthy model. Previously the pin was retained and the user had to manually unpin.
+
 ## 4.5.15 - 01-09-2026
 
 ### Added

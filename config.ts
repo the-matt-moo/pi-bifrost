@@ -53,6 +53,8 @@ export interface KeysConfig {
   pin?: string;
   /** Unpin model + thinking. Unset = not bound. */
   unpin?: string;
+  /** Toggle pin/unpin of the current model. Unset = not bound. */
+  toggle?: string;
 }
 
 export interface BifrostConfig {

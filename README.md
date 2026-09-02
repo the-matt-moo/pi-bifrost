@@ -30,7 +30,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Model discovery | Probes all Pi models | Adds `--scoped` (Pi enabled-models only, always included when requested regardless of discovery errors) and `--free` (top 5 OpenRouter free models by collection ranking, or top 5 fastest if ranking fetch fails) flags for `init` and `update`; `update --free` enforces the same cap |
 | Candidate scoping | Full registry | Classifier model lookup and tier inference filter candidates to Pi's scoped-model selection, preventing routing to models the user has not enabled |
 | Image prompts | Routed like text-only prompts | Prefers vision-capable models; if the selected tier cannot take images, Bifrost falls back to higher tiers with image support |
-| Pin quota safety | Manual pin remains until explicitly removed | A pinned model with fresh telemetry showing exhausted usage is automatically unpinned and switched to a same-tier scoped model from another provider with measured quota available; classified switches auto-pin to prevent context-loss churn from per-prompt model changes |
+| Pin quota safety | Manual pin remains until explicitly removed | A pinned model that returns a 429 or rate-limit error is auto-unpinned immediately so the next prompt routes to a healthy model; quota-exhausted models are also unpinned proactively before the request; classified switches auto-pin to prevent context-loss churn |
 | Reliability | Threshold-based circuit breaker | Any final runtime provider error immediately opens that model's circuit (including `ResourceExhausted`); next prompt selects the next healthy model in the same category, then falls back to the default category if needed |
 | Config reconciliation | `init` only | Adds `/bifrost update --scoped/--free` to preview and merge discovery results while preserving manual entries |
 | Silent mode | Not available | `/bifrost silence` / `unsilence` suppresses console and UI output without disabling routing |
@@ -237,7 +237,7 @@ If `"thinking": { "mode": "apply" }` is set in config, Bifrost assesses prompt c
 - Free models always use their highest supported thinking level; manual thinking pins still take precedence.
 - `advisory` mode logs what Bifrost *would* do without modifying Pi's active state.
 - When *you* manually change the thinking level, Bifrost logs `Thinking level manually changed to <level>; Bifrost thinking pinned.` and pins for the session. Bifrost's own automatic applies are silent — that line means a manual change, not a Bifrost default.
-- Only a thinking change under the *same* model pins thinking. Switching models (`Ctrl+P`) re-clamps the thinking level as a side effect; that never pins. `Ctrl+Delete` unpins model and thinking.
+- Only a thinking change under the *same* model pins thinking. Switching models re-clamps the thinking level as a side effect; that never pins. `Ctrl+P` toggles the pin; `Ctrl+Delete` unpins model and thinking.
 
 ## Config
 
@@ -266,10 +266,10 @@ Minimal config after `init`:
 Shortcuts are machine-local and unbound by default — Pi's extension API takes literal keys, not remappable action ids, so keyboard layouts stay a per-machine concern:
 
 ```json
-{ "keys": { "unpin": "ctrl+delete" } }
+{ "keys": { "unpin": "ctrl+delete", "toggle": "ctrl+p" } }
 ```
 
-Manual model selection already pins Bifrost, so a separate `pin` key is usually unnecessary. Pick keys the host does not reserve (`shift+tab`, `ctrl+c/d/l/o/t`, and the model-cycle keys are reserved). Reserved keys are skipped with a startup diagnostic.
+Manual model selection already pins Bifrost, so a separate `pin` key is usually unnecessary. `toggle` combines pin and unpin into one key. Pick keys the host does not reserve (`shift+tab`, `ctrl+c/d/l/o/t`, and the model-cycle keys are reserved). Reserved keys are skipped with a startup diagnostic.
 
 Classifier latency controls are optional and backward-compatible:
 
