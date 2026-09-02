@@ -202,7 +202,7 @@ describe("filterSessionExhausted", () => {
     assert.equal(res.skipped[0]?.reason, "session_exhausted");
   });
 
-  it("keeps session-exhausted models for the quick tier", () => {
+  it("keeps near-drained session models for the quick tier", () => {
     const codex = model("openai-codex", "codex");
     const anthropic = model("anthropic", "claude");
     const quota = sessionSnapshot(NOW, [["openai-codex", 0.5], ["anthropic", 0.05]]);
@@ -210,6 +210,18 @@ describe("filterSessionExhausted", () => {
     const res = filterSessionExhausted([codex, anthropic], quota, FRESH, NOW, "quick");
     assert.equal(res.candidates.length, 2);
     assert.equal(res.skipped.length, 0);
+  });
+
+  it("removes fully-drained (0%) session models even for the quick tier", () => {
+    const codex = model("openai-codex", "codex");
+    const anthropic = model("anthropic", "claude");
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.5], ["anthropic", 0]]);
+
+    const res = filterSessionExhausted([codex, anthropic], quota, FRESH, NOW, "quick");
+    assert.equal(res.candidates.length, 1);
+    assert.equal(res.candidates[0]?.provider, "openai-codex");
+    assert.equal(res.skipped[0]?.key, "anthropic/claude");
+    assert.equal(res.skipped[0]?.reason, "session_exhausted");
   });
 
   it("keeps unmeasured and stale-telemetry models", () => {

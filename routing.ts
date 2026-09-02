@@ -444,8 +444,9 @@ export function filterQuotaExhausted(
 
 /** Remove models from providers whose rolling session allowance is near-exhausted.
  *  Only applies when session telemetry is fresh (within staleMinutes). The `quick`
- *  tier is exempt — short requests can still squeeze through a nearly-drained
- *  session — but every other tier must avoid a guaranteed 429 + retry storm.
+ *  tier is exempt from the near-exhausted reserve — short requests can still
+ *  squeeze through a nearly-drained session — but a fully-drained (0%) session
+ *  is a guaranteed 429 for every tier, so it is always blocked.
  *  Never removes ALL candidates — that would deadlock the user. */
 export function filterSessionExhausted(
   candidates: Model<Api>[],
@@ -454,7 +455,7 @@ export function filterSessionExhausted(
   now: number,
   tier?: string,
 ): { candidates: Model<Api>[]; skipped: SkippedCandidate[] } {
-  if (!quota || tier === "quick") return { candidates, skipped: [] };
+  if (!quota) return { candidates, skipped: [] };
   const fresh = now - quota.fetchedAt < (quotaConfig?.staleMinutes ?? 15) * 60_000;
   if (!fresh) return { candidates, skipped: [] };
 
@@ -465,7 +466,13 @@ export function filterSessionExhausted(
     const remaining = quota.byProvider[model.provider]?.sessionRemainingFraction;
     // No session data: keep the model (unmeasured means unblocked)
     if (typeof remaining !== "number") return true;
-    if (remaining < reserve) {
+    // 0% remaining is a hard block for every tier; no request squeezes through.
+    if (remaining <= 0) {
+      skipped.push({ key: modelKey(model), reason: "session_exhausted" });
+      return false;
+    }
+    // Near-exhausted sessions are tolerated only for `quick`.
+    if (tier !== "quick" && remaining < reserve) {
       skipped.push({ key: modelKey(model), reason: "session_exhausted" });
       return false;
     }

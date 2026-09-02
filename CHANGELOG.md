@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.17 - 01-09-2026
+
+### Fixed
+- A fully-drained (0%) rolling session now blocks selection for every tier, including `quick`. Previously `quick` was fully exempt from session filtering, so a provider at 0% session remaining was still picked and returned a guaranteed 429.
+
 ## 4.5.16 - 01-09-2026
 
 ### Added
