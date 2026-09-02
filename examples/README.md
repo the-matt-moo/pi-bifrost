@@ -162,6 +162,7 @@ Use when frontier capacity comes from subscriptions such as OpenAI/Codex and Goo
 - Favors the subscription provider with more weekly allowance remaining.
 - Moves toward even selection as remaining allowances approach equilibrium.
 - Gives paid-credit candidates zero weight while any measured subscription remains above `reservePercent`.
+- Removes models whose rolling session allowance is under `sessionReservePercent` (10% default) for every tier except `quick`, avoiding guaranteed 429s.
 - Degrades to neutral routing when telemetry is stale or unavailable.
 
 Replace every model placeholder with models available in your Pi registry.

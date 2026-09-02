@@ -303,6 +303,12 @@ export function validateConfig(
       message: `quotaRouting.reservePercent must be between 0 and 1, got ${quota.reservePercent}.`,
     });
   }
+  if (quota?.sessionReservePercent !== undefined && (quota.sessionReservePercent < 0 || quota.sessionReservePercent > 1)) {
+    issues.push({
+      severity: "warning",
+      message: `quotaRouting.sessionReservePercent must be between 0 and 1, got ${quota.sessionReservePercent}.`,
+    });
+  }
   if (quota?.gamma !== undefined && (quota.gamma < 0 || !Number.isFinite(quota.gamma))) {
     issues.push({
       severity: "warning",

@@ -2,6 +2,15 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.15 - 01-09-2026
+
+### Added
+- `quotaRouting.sessionReservePercent` (default 0.10) sets the rolling-session exhaustion threshold.
+- Anthropic session (5-hour) telemetry is now tracked separately from the weekly window.
+
+### Changed
+- Routing now removes subscription models with less than 10% session allowance remaining (over 90% used) from selection for every tier except `quick`, avoiding a guaranteed 429 plus retries before the circuit opens.
+
 ## 4.5.14 - 01-09-2026
 
 ### Added

@@ -375,7 +375,7 @@ export function selectImageCapableModelFromGroups(
 
 export interface SkippedCandidate {
   key: string;
-  reason: "open_circuit" | "quota_exhausted";
+  reason: "open_circuit" | "quota_exhausted" | "session_exhausted";
   openUntil?: number;
 }
 
@@ -442,6 +442,41 @@ export function filterQuotaExhausted(
   return { candidates: filtered, skipped };
 }
 
+/** Remove models from providers whose rolling session allowance is near-exhausted.
+ *  Only applies when session telemetry is fresh (within staleMinutes). The `quick`
+ *  tier is exempt — short requests can still squeeze through a nearly-drained
+ *  session — but every other tier must avoid a guaranteed 429 + retry storm.
+ *  Never removes ALL candidates — that would deadlock the user. */
+export function filterSessionExhausted(
+  candidates: Model<Api>[],
+  quota: QuotaSnapshot | undefined,
+  quotaConfig: QuotaRoutingConfig | undefined,
+  now: number,
+  tier?: string,
+): { candidates: Model<Api>[]; skipped: SkippedCandidate[] } {
+  if (!quota || tier === "quick") return { candidates, skipped: [] };
+  const fresh = now - quota.fetchedAt < (quotaConfig?.staleMinutes ?? 15) * 60_000;
+  if (!fresh) return { candidates, skipped: [] };
+
+  const reserve = quotaConfig?.sessionReservePercent ?? 0.10;
+  const skipped: SkippedCandidate[] = [];
+  const filtered = candidates.filter((model) => {
+    if (billingClass(model) !== "subscription") return true;
+    const remaining = quota.byProvider[model.provider]?.sessionRemainingFraction;
+    // No session data: keep the model (unmeasured means unblocked)
+    if (typeof remaining !== "number") return true;
+    if (remaining < reserve) {
+      skipped.push({ key: modelKey(model), reason: "session_exhausted" });
+      return false;
+    }
+    return true;
+  });
+
+  // Don't starve the user — keep at least one candidate
+  if (filtered.length === 0) return { candidates, skipped: [] };
+  return { candidates: filtered, skipped };
+}
+
 export interface HealthyModelResolution {
   selected: Model<Api> | undefined;
   candidates: Model<Api>[];
@@ -470,15 +505,17 @@ export function resolveHealthyModel(
   quota?: QuotaSnapshot,
   quotaConfig?: QuotaRoutingConfig,
   resolvedCandidates?: readonly Model<Api>[],
+  tier?: string,
 ): HealthyModelResolution {
   const candidates = resolvedCandidates ? [...resolvedCandidates] : findCandidates(ctx, pattern);
   if (!reliabilityState || reliabilityConfig?.enabled === false) {
     const quotaFiltered = filterQuotaExhausted(candidates, quota, quotaConfig, now);
+    const sessionFiltered = filterSessionExhausted(quotaFiltered.candidates, quota, quotaConfig, now, tier);
     return {
-      selected: selectModel(quotaFiltered.candidates, strategy, quota, quotaConfig, now),
+      selected: selectModel(sessionFiltered.candidates, strategy, quota, quotaConfig, now),
       candidates,
       healthyCandidates: candidates,
-      skipped: quotaFiltered.skipped,
+      skipped: [...quotaFiltered.skipped, ...sessionFiltered.skipped],
     };
   }
 
@@ -496,10 +533,11 @@ export function resolveHealthyModel(
   // Filter out models from providers with exhausted weekly quota.
   // Guard: if all candidates would be removed, keep the original set.
   const quotaFiltered = filterQuotaExhausted(healthyCandidates, quota, quotaConfig, now);
-  const allSkipped = [...skipped, ...quotaFiltered.skipped];
+  const sessionFiltered = filterSessionExhausted(quotaFiltered.candidates, quota, quotaConfig, now, tier);
+  const allSkipped = [...skipped, ...quotaFiltered.skipped, ...sessionFiltered.skipped];
 
   return {
-    selected: selectModel(quotaFiltered.candidates, strategy, quota, quotaConfig, now),
+    selected: selectModel(sessionFiltered.candidates, strategy, quota, quotaConfig, now),
     candidates,
     healthyCandidates,
     skipped: allSkipped,
@@ -535,6 +573,7 @@ export function resolveModelWithFallback(
     options.quota,
     options.quotaConfig,
     options.requestedCandidates,
+    options.requestedTier,
   );
   if (primary.selected) {
     return {
@@ -581,6 +620,7 @@ export function resolveModelWithFallback(
     options.quota,
     options.quotaConfig,
     options.defaultCandidates,
+    options.defaultTier,
   );
 
   return {

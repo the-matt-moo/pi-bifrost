@@ -262,6 +262,43 @@ describe("routing", () => {
       assert.equal(result.selected, undefined);
       assert.equal(result.fallbackReason, "all_tiers_exhausted");
     });
+
+    it("filters session-exhausted models for non-quick tiers but not quick", () => {
+      const drained = makeModel("anthropic", "claude-opus", 15);
+      const healthy = makeModel("openai-codex", "codex", 15);
+      const ctx = makeCtx([drained, healthy]);
+      const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+      const quota = {
+        byProvider: {
+          anthropic: { weeklyRemainingFraction: 0.5, sessionRemainingFraction: 0.05 },
+          "openai-codex": { weeklyRemainingFraction: 0.5, sessionRemainingFraction: 0.5 },
+        },
+        fetchedAt: now,
+      };
+      const quotaConfig = { gamma: 3, reservePercent: 0.03, staleMinutes: 15 };
+
+      const general = resolveModelWithFallback(ctx, {
+        requestedTier: "general",
+        requestedPattern: ["anthropic/claude-opus", "openai-codex/codex"],
+        requestedStrategy: "first",
+        quota,
+        quotaConfig,
+        now,
+      });
+      assert.equal(modelKey(general.selected), "openai-codex/codex");
+      assert.equal(general.skipped[0]?.reason, "session_exhausted");
+
+      const quick = resolveModelWithFallback(ctx, {
+        requestedTier: "quick",
+        requestedPattern: ["anthropic/claude-opus", "openai-codex/codex"],
+        requestedStrategy: "first",
+        quota,
+        quotaConfig,
+        now,
+      });
+      assert.equal(modelKey(quick.selected), "anthropic/claude-opus");
+      assert.equal(quick.skipped.length, 0);
+    });
   });
 
   it("reuses pre-resolved candidates without rescanning registry", () => {

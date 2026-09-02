@@ -16,6 +16,9 @@ export interface ProviderQuota {
   weeklyRemainingFraction?: number;
   /** Hours until the weekly window resets. Undefined when unknown. */
   hoursToReset?: number;
+  /** Fraction of the rolling session (e.g. 5-hour) allowance remaining, 0..1.
+   *  Drives hard 429-avoidance filtering. Undefined when unknown. */
+  sessionRemainingFraction?: number;
 }
 
 export interface QuotaSnapshot {
@@ -26,6 +29,9 @@ export interface QuotaSnapshot {
 export interface QuotaRoutingConfig {
   /** Fraction of weekly allowance treated as "exhausted" (default 0.03). */
   reservePercent?: number;
+  /** Fraction of the rolling session allowance below which a model is treated
+   *  as exhausted for every tier except `quick` (default 0.10 — over 90% used). */
+  sessionReservePercent?: number;
   /** Exponent shaping quota bias — higher favors the heavier side harder (default 3). */
   gamma?: number;
   /** Snapshot older than this is treated as no data (minutes, default 15). */
@@ -192,20 +198,29 @@ async function fetchAnthropicQuota(): Promise<ProviderQuota | undefined> {
     if (!res.ok) return undefined;
     const json = (await res.json()) as any;
     
-    // Default to the 7-day metric for subscription balancing, fallback to session metric
-    const usage = json?.seven_day || json?.five_hour;
-    if (!usage || typeof usage.utilization !== "number") return undefined;
+    // Weekly balancing prefers the 7-day window; falls back to the session
+    // (5-hour) window only when weekly telemetry is absent.
+    const weekly = json?.seven_day;
+    const session = json?.five_hour;
+    const weeklyUsage = weekly?.utilization !== undefined ? weekly : session;
+    if (!weeklyUsage || typeof weeklyUsage.utilization !== "number") return undefined;
 
     let hoursToReset: number | undefined;
-    if (usage.resets_at) {
-      const resetMs = new Date(usage.resets_at).getTime() - Date.now();
+    if (weeklyUsage.resets_at) {
+      const resetMs = new Date(weeklyUsage.resets_at).getTime() - Date.now();
       if (resetMs > 0) hoursToReset = resetMs / 3600_000;
     }
 
-    return {
-      weeklyRemainingFraction: Math.max(0, 1 - usage.utilization),
+    const result: ProviderQuota = {
+      weeklyRemainingFraction: Math.max(0, 1 - weeklyUsage.utilization),
       hoursToReset,
     };
+    // The session window drives the hard 429-avoidance filter. A session can be
+    // fully drained while the weekly window still shows headroom.
+    if (session && typeof session.utilization === "number") {
+      result.sessionRemainingFraction = Math.max(0, 1 - session.utilization);
+    }
+    return result;
   } catch {
     return undefined;
   }

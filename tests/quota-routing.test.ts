@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   billingClass,
+  filterSessionExhausted,
   isProviderQuotaExhausted,
   selectComparableAvailableModel,
   selectModel,
@@ -30,6 +31,14 @@ function snapshot(now: number, entries: [string, number][], hours: number[] = []
   const byProvider: QuotaSnapshot["byProvider"] = {};
   entries.forEach(([provider, remaining], i) => {
     byProvider[provider] = { weeklyRemainingFraction: remaining, hoursToReset: hours[i] };
+  });
+  return { byProvider, fetchedAt: now };
+}
+
+function sessionSnapshot(now: number, entries: [string, number][]): QuotaSnapshot {
+  const byProvider: QuotaSnapshot["byProvider"] = {};
+  entries.forEach(([provider, remaining]) => {
+    byProvider[provider] = { weeklyRemainingFraction: 0.5, sessionRemainingFraction: remaining };
   });
   return { byProvider, fetchedAt: now };
 }
@@ -177,6 +186,58 @@ describe("subscriptionWeights", () => {
 
     const empty = subscriptionWeights([codex, or], { byProvider: {}, fetchedAt: NOW }, FRESH, NOW);
     assert.deepEqual(empty, [1, 1]);
+  });
+});
+
+describe("filterSessionExhausted", () => {
+  it("removes subscription models under 10% session remaining for non-quick tiers", () => {
+    const codex = model("openai-codex", "codex");
+    const anthropic = model("anthropic", "claude");
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.5], ["anthropic", 0.05]]);
+
+    const res = filterSessionExhausted([codex, anthropic], quota, FRESH, NOW, "general");
+    assert.equal(res.candidates.length, 1);
+    assert.equal(res.candidates[0]?.provider, "openai-codex");
+    assert.equal(res.skipped[0]?.key, "anthropic/claude");
+    assert.equal(res.skipped[0]?.reason, "session_exhausted");
+  });
+
+  it("keeps session-exhausted models for the quick tier", () => {
+    const codex = model("openai-codex", "codex");
+    const anthropic = model("anthropic", "claude");
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.5], ["anthropic", 0.05]]);
+
+    const res = filterSessionExhausted([codex, anthropic], quota, FRESH, NOW, "quick");
+    assert.equal(res.candidates.length, 2);
+    assert.equal(res.skipped.length, 0);
+  });
+
+  it("keeps unmeasured and stale-telemetry models", () => {
+    const codex = model("openai-codex", "codex");
+    const anthropic = model("anthropic", "claude");
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.5]]); // anthropic unmeasured
+
+    const res = filterSessionExhausted([codex, anthropic], quota, FRESH, NOW, "general");
+    assert.equal(res.candidates.length, 2);
+
+    const stale = filterSessionExhausted(
+      [codex, anthropic],
+      sessionSnapshot(NOW - 16 * 60_000, [["openai-codex", 0.05]]),
+      FRESH,
+      NOW,
+      "general",
+    );
+    assert.equal(stale.candidates.length, 2);
+  });
+
+  it("never removes all candidates", () => {
+    const codex = model("openai-codex", "codex");
+    const anthropic = model("anthropic", "claude");
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.05], ["anthropic", 0.02]]);
+
+    const res = filterSessionExhausted([codex, anthropic], quota, FRESH, NOW, "general");
+    assert.equal(res.candidates.length, 2);
+    assert.equal(res.skipped.length, 0);
   });
 });
 

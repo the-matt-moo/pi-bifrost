@@ -235,10 +235,15 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   function summarizeQuota(store: QuotaStore): Record<string, string> {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(store.getSnapshot().byProvider)) {
-      out[k] =
+      const weekly =
         typeof v.weeklyRemainingFraction === "number"
           ? (v.weeklyRemainingFraction * 100).toFixed(0) + "%"
           : "?";
+      const session =
+        typeof v.sessionRemainingFraction === "number"
+          ? ` sess ${(v.sessionRemainingFraction * 100).toFixed(0)}%`
+          : "";
+      out[k] = weekly + session;
     }
     return out;
   }
@@ -313,6 +318,8 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         now,
         quota,
         state.config.quotaRouting,
+        undefined,
+        tier,
       );
       return {
         tier,

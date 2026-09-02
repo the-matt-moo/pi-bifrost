@@ -213,6 +213,13 @@
           "description": "Fraction of weekly allowance treated as exhausted (default 0.03). Paid OpenRouter candidates stay blocked while any subscription is above this.",
           "default": 0.03
         },
+        "sessionReservePercent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of the rolling session allowance below which a model is treated as exhausted for every tier except quick (default 0.10, i.e. over 90% used).",
+          "default": 0.10
+        },
         "gamma": {
           "type": "number",
           "minimum": 0,

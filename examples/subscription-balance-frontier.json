@@ -20,6 +20,7 @@
   },
   "quotaRouting": {
     "reservePercent": 0.03,
+    "sessionReservePercent": 0.10,
     "gamma": 3,
     "staleMinutes": 15,
     "refreshMinutes": 30
