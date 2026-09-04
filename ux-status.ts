@@ -18,6 +18,7 @@ export interface BifrostModeState {
   silent: boolean;
   thinkingMode?: "off" | "advisory" | "apply";
   thinkingPinned?: boolean;
+  modelCategory?: string;
 }
 
 export function shouldRefreshRegistry(
@@ -161,6 +162,7 @@ export function setBifrostModeStatus(ctx: ExtensionContext, state: BifrostModeSt
         silent: state.silent,
         thinkingMode: state.thinkingMode,
         thinkingPinned: state.thinkingPinned ?? false,
+        ...(state.modelCategory ? { modelCategory: state.modelCategory } : {}),
       };
       writeFileSync(file, JSON.stringify(current, null, 2), "utf-8");
     } catch {}
