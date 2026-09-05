@@ -37,7 +37,13 @@ function makeCtx() {
       setFooter: () => {},
       setHeader: () => {},
       setTitle: () => {},
-      custom: async () => undefined,
+      custom: async (factory: any) => {
+        // Evaluate factory to intercept lines for tests. It returns ResultViewer.
+        // The tests don't have access to the lines directly unless we extract them.
+        // Wait, ResultViewer constructor takes lines. Let's just store the fact we got a custom modal.
+        // We can pass a fake theme to instantiate it and grab the rendered lines, or just spy on lines.
+        calls.push({ kind: "custom", factory });
+      },
       pasteToEditor: () => {},
       getEditorText: () => "",
       editor: async () => undefined,
@@ -235,27 +241,39 @@ describe("bifrost command ui", () => {
 
   it("prints open circuit count in debug output", async () => {
     const { ctx, calls } = makeCtx();
+    ctx.mode = "cli";
+    ctx.hasUI = false;
+    let output = "";
+    const origError = console.error;
+    console.error = (msg: string) => { output += msg + "\n"; };
+    
     const state = makeState();
     const t = Date.now();
     state.reliabilityStore = makeStore({ "openai/gpt-5.4": { failures: [t], openUntil: t + 60_000 } });
     const dispatch = createCommandRouter(state as never);
 
     await dispatch("debug", ctx as never);
+    console.error = origError;
 
-    const widget = calls.find((call) => call.kind === "widget" && String(call.value).startsWith("bifrost-output:"));
-    assert(widget?.lines?.some((line) => line.includes("openCircuits: 1")));
+    assert(output.includes("openCircuits: 1"));
   });
 
   it("shows no open circuits when reliability is disabled", async () => {
     const { ctx, calls } = makeCtx();
+    ctx.mode = "cli";
+    ctx.hasUI = false;
+    let output = "";
+    const origError = console.error;
+    console.error = (msg: string) => { output += msg + "\n"; };
+
     const state = makeState();
     state.config.reliability.enabled = false;
     state.reliabilityStore = makeStore({ "openai/gpt-5.4": { failures: [Date.now()], openUntil: Date.now() + 60_000 } }, false);
     const dispatch = createCommandRouter(state as never);
 
     await dispatch("debug", ctx as never);
+    console.error = origError;
 
-    const widget = calls.find((call) => call.kind === "widget" && String(call.value).startsWith("bifrost-output:"));
-    assert(widget?.lines?.some((line) => line.includes("openCircuits: 0")));
+    assert(output.includes("openCircuits: 0"));
   });
 });

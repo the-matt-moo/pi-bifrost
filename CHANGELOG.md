@@ -4,6 +4,9 @@ All notable changes to pi-bifrost are documented here.
 
 ## Unreleased
 
+### Fixed
+- Fixed `/bifrost debug`, `doctor`, `init`, `refresh`, `providers`, and `probe` outputs getting truncated with `... (widget truncated)` in the TUI when exceeding 10 lines. They now display in a scrollable full-screen overlay modal (`uiResult`), while preserving non-interactive behavior.
+
 ### Changed
 - Config is now global-only: `~/.pi/agent/bifrost.json` is the single source
   of truth (highest precedence) and the only config file read besides the
