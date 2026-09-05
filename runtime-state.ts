@@ -1,4 +1,4 @@
-import { resolveStoragePath, readJsonFile, writeJsonFile } from "./storage.ts";
+import { resolveStoragePath, readJsonFile, writeJsonFileAtomic } from "./storage.ts";
 
 /**
  * Runtime mode state that must survive extension reload and Pi restart.
@@ -17,7 +17,7 @@ export interface RuntimeModeState {
 /**
  * Subset of runtime state that is persisted across extension reload and Pi
  * restart. `pinned` is deliberately excluded — it is session-local only and
- * must not be read from or written to disk (ADR-0015).
+ * must not be read from or written to disk.
  */
 export interface PersistedModeState {
   enabled: boolean;
@@ -33,7 +33,10 @@ export const DEFAULT_RUNTIME_STATE: RuntimeModeState = {
   silent: false,
 };
 
-export function runtimeStatePath(_cwd: string): string {
+export function runtimeStatePath(_cwd: string, sessionId?: string): string {
+  if (sessionId) {
+    return resolveStoragePath(_cwd, undefined, `bifrost-sessions/${sessionId}/bifrost-state.json`);
+  }
   return resolveStoragePath(_cwd, undefined, "bifrost-state.json");
 }
 
@@ -43,7 +46,7 @@ export function loadRuntimeState(path: string, fallback: RuntimeModeState = DEFA
     if (!parsed) return { ...fallback };
     return {
       enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : fallback.enabled,
-      pinned: false, // pinned is ephemeral — session-local, never inherit from file
+      pinned: false,
       classifierEnabled:
         typeof parsed.classifierEnabled === "boolean"
           ? parsed.classifierEnabled
@@ -61,7 +64,7 @@ export function loadRuntimeState(path: string, fallback: RuntimeModeState = DEFA
 
 export function saveRuntimeState(path: string, state: PersistedModeState): void {
   try {
-    writeJsonFile(path, state);
+    writeJsonFileAtomic(path, state);
   } catch (err) {
     console.error(`[bifrost] failed to save runtime state: ${err}`);
   }

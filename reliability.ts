@@ -1,4 +1,4 @@
-import { resolveStoragePath, readJsonFile, writeJsonFile } from "./storage.ts";
+import { resolveStoragePath, readJsonFile, writeJsonFileAtomic } from "./storage.ts";
 
 export interface ReliabilityConfig {
   enabled?: boolean;
@@ -259,7 +259,7 @@ export function loadReliability(path: string): ReliabilityState {
 
 export function saveReliability(path: string, state: ReliabilityState): void {
   try {
-    writeJsonFile(path, state);
+    writeJsonFileAtomic(path, state);
   } catch (err) {
     console.error(`[bifrost] failed to save reliability state: ${err}`);
   }

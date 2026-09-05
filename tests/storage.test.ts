@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readJsonFile, resolveStoragePath, writeJsonFile } from "../storage.ts";
+import { readJsonFile, resolveStoragePath, writeJsonFile, writeJsonFileAtomic } from "../storage.ts";
 
 describe("storage", () => {
   it("resolves absolute, tilde, and agent-dir-relative paths", () => {
@@ -36,6 +36,17 @@ describe("storage", () => {
       writeJsonFile(path, { ok: true, count: 2 });
       assert.deepEqual(readJsonFile<{ ok: boolean; count: number }>(path), { ok: true, count: 2 });
       assert.equal(readJsonFile(join(cwd, "missing.json")), undefined);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("writes atomically to json files", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "bifrost-storage-"));
+    try {
+      const path = join(cwd, "nested", "atomic.json");
+      writeJsonFileAtomic(path, { ok: true });
+      assert.deepEqual(readJsonFile(path), { ok: true });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

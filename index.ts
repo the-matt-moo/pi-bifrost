@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { classifyWithLLM as invokeClassifier, type ClassifierModel } from "./classifier.js";
 
@@ -45,7 +46,8 @@ import {
 import { QuotaStore } from "./quota.js";
 import { ReliabilityStore } from "./reliability-store.js";
 import { isRetryableProviderLimit } from "./reliability.js";
-import { loadRuntimeState, runtimeStatePath, saveRuntimeState } from "./runtime-state.js";
+import { loadRuntimeState, runtimeStatePath, saveRuntimeState, DEFAULT_RUNTIME_STATE, type RuntimeModeState } from "./runtime-state.js";
+import { cleanupSessionState, scheduleSessionCleanup } from "./session-cleanup.js";
 import { createCommandRouter, getBifrostCommandCompletions, log, logOverwrite, uiBusy, uiDone, setBifrostSilent, syncBifrostModeStatus, clearBifrostWidgets, formatBifrostRouting, type BifrostState } from "./commands.js";
 import { setupDebug, debug, debugMeasure } from "./debug.js";
 import { parseInlineOverride } from "./inline-override.js";
@@ -187,14 +189,16 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   const cacheEntries = loadCache(cacheFilePath);
   const reliabilityStore = new ReliabilityStore({ cwd: process.cwd(), config: config.reliability });
   const quotaStore = new QuotaStore(config.quotaRouting);
-  const runtimeStateFile = runtimeStatePath(process.cwd());
-  const runtimeState = loadRuntimeState(runtimeStateFile, {
+  let runtimeStateFile = runtimeStatePath(process.cwd());
+  let runtimeState: RuntimeModeState = loadRuntimeState(runtimeStateFile, {
+    ...DEFAULT_RUNTIME_STATE,
     enabled: config.enabled ?? true,
-    pinned: false,
     classifierEnabled: config.classifier?.enabled ?? true,
     thinkingMode: config.thinking?.mode ?? "off",
     silent: config.silent ?? false,
   });
+  const cleanupTimer = scheduleSessionCleanup();
+  process.once("exit", () => clearInterval(cleanupTimer));
   let selfSelecting = false;
   let selfSettingThinkingLevel: ThinkingLevel | undefined;
   // Pi emits thinking/model events concurrently during a model switch. Ignore thinking
@@ -281,7 +285,36 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     flushCacheSave: cacheWriter.flush,
   };
 
+  function applyRuntimeState(nextFile: string, nextState: RuntimeModeState): void {
+    runtimeStateFile = nextFile;
+    runtimeState = nextState;
+    state.enabled = nextState.enabled;
+    state.classifierEnabled = nextState.classifierEnabled;
+    state.thinkingMode = nextState.thinkingMode ?? state.thinkingMode;
+    state.pinned = false;
+    state.silent = nextState.silent;
+  }
 
+  function loadSessionRuntimeState(sessionId?: string): void {
+    const globalPath = runtimeStatePath(process.cwd());
+    const scopedPath = runtimeStatePath(process.cwd(), sessionId);
+    const fallback: RuntimeModeState = {
+      ...DEFAULT_RUNTIME_STATE,
+      enabled: config.enabled ?? true,
+      classifierEnabled: config.classifier?.enabled ?? true,
+      thinkingMode: config.thinking?.mode ?? "off",
+      silent: config.silent ?? false,
+    };
+    const globalState = loadRuntimeState(globalPath, fallback);
+    if (sessionId) {
+      if (!existsSync(scopedPath) && existsSync(globalPath)) {
+        saveRuntimeState(scopedPath, globalState);
+      }
+      applyRuntimeState(scopedPath, loadRuntimeState(scopedPath, globalState));
+      return;
+    }
+    applyRuntimeState(globalPath, globalState);
+  }
 
   function inferPattern(ctx: ExtensionContext, tier: string): string[] {
     const raw = state.config.models?.[tier];
@@ -460,6 +493,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    loadSessionRuntimeState(ctx.sessionManager?.getSessionId?.());
     state.thinkingLevel = pi.getThinkingLevel();
     lastSeenModel = modelKey(ctx.model);
     setBifrostSilent(ctx, state.silent);
@@ -501,6 +535,10 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
   pi.on("agent_end", async (event) => {
     runtimeReliability.observe(event.messages);
+  });
+
+  pi.on("session_shutdown", async () => {
+    cleanupSessionState();
   });
 
   pi.on("turn_end", async (event) => {

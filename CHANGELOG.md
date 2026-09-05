@@ -2,12 +2,18 @@
 
 All notable changes to pi-bifrost are documented here.
 
-## Unreleased
+## 4.5.21 - 05-09-2026
 
 ### Fixed
+- Fixed `/bifrost refresh` probe error for `antigravity/gemini-3.1-pro` and other antigravity reasoning models ("Budget 0 is invalid. This model only works in thinking mode."). The probe now sets a minimum thinking budget for `antigravity-api` models, matching existing handling for `google-generative-ai` and `anthropic-messages`.
+- Fixed ESC key not closing the result viewer popup. The popup now uses the TUI keybindings manager (`tui.select.cancel`) instead of raw escape key detection, matching the canonical approach used by all other Pi TUI components.
+- Fixed result viewer popup content potentially overflowing its border box. Each rendered line is now defensively clamped to the exact overlay width (ANSI-aware), preventing background content from bleeding through gaps.
 - Fixed `/bifrost debug`, `doctor`, `init`, `refresh`, `providers`, and `probe` outputs getting truncated with `... (widget truncated)` in the TUI when exceeding 10 lines. They now display in a scrollable full-screen overlay modal (`uiResult`), while preserving non-interactive behavior.
+- Shared stores now use file locking plus atomic replace, so concurrent Pi sessions no longer trample cache or reliability writes.
 
 ### Changed
+- Runtime mode toggles now persist per Pi session instead of in one shared `bifrost-state.json`, so pin/silence/classifier/thinking settings no longer leak across concurrent sessions.
+- Old session-scoped Bifrost state is now cleaned up automatically on startup and session shutdown.
 - Config is now global-only: `~/.pi/agent/bifrost.json` is the single source
   of truth (highest precedence) and the only config file read besides the
   extension default. Per-project layers (`bifrost.json`, `.pi/bifrost.json`)

@@ -160,20 +160,29 @@ async function probeOne(
         return base;
       }
 
+      const streamOptions: any = {
+        maxTokens: PROBE_MAX_TOKENS,
+        signal: controller.signal,
+        cacheRetention: "none",
+        apiKey: auth.auth.apiKey,
+        headers: auth.auth.headers,
+        env: auth.env,
+      };
+      // Models requiring thinking mode need a minimum budget to avoid "Budget 0 is invalid" error
+      if (model.reasoning) {
+        if (model.api === "google-generative-ai" || model.api === "antigravity-api") {
+          streamOptions.thinkingBudgets = { minimal: 1024 };
+        } else if (model.api === "anthropic-messages") {
+          streamOptions.thinkingBudgetTokens = 1024;
+        }
+      }
       const stream = provider.streamSimple(
         model,
         {
           systemPrompt: "Reply only with 2.",
           messages: [{ role: "user", content: PROBE_PROMPT, timestamp: Date.now() }],
         },
-        {
-          maxTokens: PROBE_MAX_TOKENS,
-          signal: controller.signal,
-          cacheRetention: "none",
-          apiKey: auth.auth.apiKey,
-          headers: auth.auth.headers,
-          env: auth.env,
-        },
+        streamOptions,
       );
       const response = await stream.result();
       base.duration_ms = +(performance.now() - start).toFixed(1);

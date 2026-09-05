@@ -35,6 +35,14 @@ describe("runtime state", () => {
     });
   });
 
+  it("uses a session-scoped runtime path when session id is present", () => {
+    withTempAgentDir(() => {
+      const path = runtimeStatePath("/project", "sess-123");
+      assert.ok(path.includes("bifrost-sessions"));
+      assert.ok(path.includes("sess-123"));
+    });
+  });
+
   it("uses fallback when file missing", () => {
     withTempAgentDir(() => {
       const path = runtimeStatePath("/project");

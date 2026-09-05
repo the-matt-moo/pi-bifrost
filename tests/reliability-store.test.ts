@@ -7,7 +7,6 @@ import {
   DEFAULT_RELIABILITY,
   emptyReliabilityState,
   recordModelFailure,
-  type ReliabilityState,
 } from "../reliability.ts";
 import { ReliabilityStore, type ReliabilityIo } from "../reliability-store.ts";
 
@@ -139,19 +138,22 @@ describe("reliability store", () => {
     }
   });
 
-  it("two store instances on same file see each other after persist", () => {
-    const writes: ReliabilityState[] = [];
-    const shared: { state: ReliabilityState } = { state: emptyReliabilityState() };
-    const io: ReliabilityIo = {
-      load: () => shared.state,
-      save: (_p, s) => { shared.state = s; writes.push(s); },
-    };
-    const storeA = new ReliabilityStore({ cwd: "/tmp", config: cfg, io });
-    storeA.recordFailure(key, "probe", "timeout", 1000);
-    // Second store loads same state
-    const storeB = new ReliabilityStore({ cwd: "/tmp", config: cfg, io });
-    assert.equal(storeB.getState().models[key]?.lastFailureReason, "timeout");
-    assert.equal(writes.length, 1);
+  it("two store instances on same file merge stale writes", () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "bifrost-agent-"));
+    const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    try {
+      const storeA = new ReliabilityStore({ cwd: "/tmp", config: cfg });
+      const storeB = new ReliabilityStore({ cwd: "/tmp", config: cfg });
+      storeA.recordFailure("openai/gpt-5.4", "probe", "timeout", 1000);
+      storeB.recordFailure("openai/gpt-4.1-mini", "probe", "429", 2000);
+      const reloaded = new ReliabilityStore({ cwd: "/tmp", config: cfg });
+      assert.equal(reloaded.getState().models["openai/gpt-5.4"]?.lastFailureReason, "timeout");
+      assert.equal(reloaded.getState().models["openai/gpt-4.1-mini"]?.lastFailureReason, "429");
+    } finally {
+      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      rmSync(agentDir, { recursive: true, force: true });
+    }
   });
 
   it("pruneStaleTrials clears trialActive when openUntil expired", () => {

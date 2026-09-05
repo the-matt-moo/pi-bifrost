@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { createCommandRouter, currentBifrostModeState, getBifrostCommandCompletions, type BifrostState } from "../commands.ts";
 
 function makeCtx() {
-  const calls: Array<{ kind: string; value?: unknown; title?: string; options?: string[]; lines?: string[] }> = [];
-  const ctx = {
+  const calls: Array<{ kind: string; value?: unknown; title?: string; options?: string[]; lines?: string[]; factory?: unknown }> = [];
+  const ctx: { hasUI: boolean; mode: string; ui: Record<string, unknown> } = {
     hasUI: true,
     mode: "tui",
     ui: {
@@ -57,7 +57,7 @@ function makeCtx() {
       setTheme: () => ({ success: true }),
     },
   };
-  return { ctx: ctx as never, calls };
+  return { ctx, calls };
 }
 
 function makeStore(reliabilityState?: Record<string, { failures: number[]; openUntil?: number }>, enabled = true) {
@@ -240,7 +240,7 @@ describe("bifrost command ui", () => {
   });
 
   it("prints open circuit count in debug output", async () => {
-    const { ctx, calls } = makeCtx();
+    const { ctx } = makeCtx();
     ctx.mode = "cli";
     ctx.hasUI = false;
     let output = "";
@@ -259,7 +259,7 @@ describe("bifrost command ui", () => {
   });
 
   it("shows no open circuits when reliability is disabled", async () => {
-    const { ctx, calls } = makeCtx();
+    const { ctx } = makeCtx();
     ctx.mode = "cli";
     ctx.hasUI = false;
     let output = "";

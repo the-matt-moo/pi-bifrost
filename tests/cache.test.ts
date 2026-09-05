@@ -10,6 +10,7 @@ import {
   updateCache,
   cachePath,
   loadCache,
+  saveCache,
   createDeferredCacheWriter,
 } from "../cache.ts";
 
@@ -172,6 +173,23 @@ describe("cache", () => {
         const entries = loadCache(path);
         assert.equal(entries.length, 1);
         assert.equal(entries[0].category, "quick");
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it("merges stale concurrent cache writes", () => {
+      const cwd = mkdtempSync(join(tmpdir(), "bifrost-cache-"));
+      try {
+        const path = join(cwd, ".pi", "bifrost-cache.jsonl");
+        const first = updateCache([], "first prompt", "quick", 10);
+        const second = updateCache([], "second prompt", "frontier", 10);
+        saveCache(path, first);
+        saveCache(path, second);
+        const entries = loadCache(path);
+        assert.equal(entries.length, 2);
+        assert.ok(entries.some((e) => e.normalized === normalize("first prompt")));
+        assert.ok(entries.some((e) => e.normalized === normalize("second prompt")));
       } finally {
         rmSync(cwd, { recursive: true, force: true });
       }

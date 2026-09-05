@@ -11,6 +11,7 @@ import {
   type ReliabilityRecord,
   type ReliabilityState,
 } from "./reliability.ts";
+import { withFileLock } from "./storage.ts";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -81,14 +82,12 @@ export class ReliabilityStore {
   // ── Intent-only writes (config read from store internally) ──
 
   recordFailure(model: string, source: ReliabilitySource, reason: string, now?: number): void {
-    this.stateValue = recordModelFailure(this.stateValue, model, this.configValue, now ?? this.nowFn(), source, reason);
-    this.persist();
+    this.stateValue = this.commit((state) => recordModelFailure(state, model, this.configValue, now ?? this.nowFn(), source, reason));
   }
 
   recordSuccess(model: string, source: ReliabilitySource, now?: number): void {
     if (this.configValue?.enabled === false) return;
-    this.stateValue = recordModelSuccess(this.stateValue, model, now ?? this.nowFn(), source);
-    this.persist();
+    this.stateValue = this.commit((state) => recordModelSuccess(state, model, now ?? this.nowFn(), source));
   }
 
   /** Policy A: success only when trial was active; failure always. */
@@ -102,27 +101,23 @@ export class ReliabilityStore {
 
   beginTrial(model: string): void {
     if (this.configValue?.enabled === false) return;
-    this.stateValue = beginTrial(this.stateValue, model);
-    this.persist();
+    this.stateValue = this.commit((state) => beginTrial(state, model));
   }
 
   applyOutcomes(outcomes: readonly ReliabilityOutcome[], now?: number): void {
     const t = now ?? this.nowFn();
-    // Track whether any outcome actually changed state to avoid a no-op persist.
-    // recordModelSuccess/Failure always spreads new state when enabled, so the
-    // changed flag mainly short-circuits the disabled case.
-    let changed = false;
-    for (const outcome of outcomes) {
-      if (outcome.ok) {
-        if (this.configValue?.enabled === false) continue;
-        const next = recordModelSuccess(this.stateValue, outcome.model, t, outcome.source);
-        if (next !== this.stateValue) { this.stateValue = next; changed = true; }
-      } else {
-        const next = recordModelFailure(this.stateValue, outcome.model, this.configValue, t, outcome.source, outcome.reason);
-        if (next !== this.stateValue) { this.stateValue = next; changed = true; }
+    this.stateValue = this.commit((state) => {
+      let next = state;
+      for (const outcome of outcomes) {
+        if (outcome.ok) {
+          if (this.configValue?.enabled === false) continue;
+          next = recordModelSuccess(next, outcome.model, t, outcome.source);
+        } else {
+          next = recordModelFailure(next, outcome.model, this.configValue, t, outcome.source, outcome.reason);
+        }
       }
-    }
-    if (changed) this.persist();
+      return next;
+    });
   }
 
   // ── Config lifecycle ─────────────────────────────────────────
@@ -139,8 +134,44 @@ export class ReliabilityStore {
 
   // ── Private ─────────────────────────────────────────────────
 
-  private persist(): void {
-    this.io.save(this.pathValue, this.stateValue);
+  private commit(mutator: (state: ReliabilityState) => ReliabilityState): ReliabilityState {
+    let next = this.stateValue;
+    withFileLock(this.pathValue, () => {
+      const current = this.pruneStaleTrials(this.io.load(this.pathValue));
+      const base = this.mergeStates(this.stateValue, current);
+      next = this.pruneStaleTrials(mutator(base));
+      this.io.save(this.pathValue, next);
+    });
+    return next;
+  }
+
+  private mergeStates(a: ReliabilityState, b: ReliabilityState): ReliabilityState {
+    const models: Record<string, ReliabilityRecord> = { ...a.models };
+    for (const [key, record] of Object.entries(b.models)) {
+      const current = models[key];
+      if (!current) {
+        models[key] = { ...record };
+        continue;
+      }
+      const failureAtA = current.lastFailureAt ?? 0;
+      const failureAtB = record.lastFailureAt ?? 0;
+      const successAtA = current.lastSuccessAt ?? 0;
+      const successAtB = record.lastSuccessAt ?? 0;
+      models[key] = {
+        ...current,
+        ...record,
+        failures: [...new Set([...current.failures, ...record.failures])].sort((x, y) => x - y),
+        openUntil: Math.max(current.openUntil ?? 0, record.openUntil ?? 0) || undefined,
+        trialActive: Boolean(current.trialActive || record.trialActive),
+        cooldownMultiplier: Math.max(current.cooldownMultiplier ?? 0, record.cooldownMultiplier ?? 0) || undefined,
+        lastFailureAt: Math.max(failureAtA, failureAtB) || undefined,
+        lastFailureSource: failureAtB > failureAtA ? record.lastFailureSource : current.lastFailureSource,
+        lastFailureReason: failureAtB > failureAtA ? record.lastFailureReason : current.lastFailureReason,
+        lastSuccessAt: Math.max(successAtA, successAtB) || undefined,
+        lastSuccessSource: successAtB > successAtA ? record.lastSuccessSource : current.lastSuccessSource,
+      };
+    }
+    return { version: 1, models };
   }
 
   private pruneStaleTrials(state: ReliabilityState): ReliabilityState {

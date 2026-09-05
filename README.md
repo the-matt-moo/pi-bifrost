@@ -247,11 +247,12 @@ Config merges from two paths (agent dir wins):
 1. Extension default (`<extensionDir>/bifrost.json`)
 2. Global (`~/.pi/agent/bifrost.json`)
 
-There is no per-project config layer: routing and runtime state are global, so
-behavior is identical in every cwd. `/bifrost init`, `refresh`, `update`,
-`add-model`, and `remove-model` all write to `~/.pi/agent/bifrost.json`, and
-the runtime artifacts (state, cache, probe results, reliability, debug log)
-live alongside it under `~/.pi/agent/`.
+There is no per-project config layer: routing is global, so behavior is
+identical in every cwd. `/bifrost init`, `refresh`, `update`, `add-model`, and
+`remove-model` all write to `~/.pi/agent/bifrost.json`. Shared runtime
+artifacts (cache, probe results, reliability, debug log) live under
+`~/.pi/agent/`, while session toggles (enabled/classifier/thinking/silent)
+are stored per Pi session.
 
 Minimal config after `init`:
 

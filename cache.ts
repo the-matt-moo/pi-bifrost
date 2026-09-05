@@ -1,6 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { resolveStoragePath, readTextFile, writeTextFile } from "./storage.ts";
+import { resolveStoragePath, readTextFile, withFileLock, writeTextFileAtomic } from "./storage.ts";
 
 export interface CacheEntry {
   normalized: string;
@@ -95,24 +93,47 @@ function serializeCache(entries: CacheEntry[]): string {
   return lines ? lines + "\n" : "";
 }
 
-export function saveCache(path: string, entries: CacheEntry[]) {
-  try {
-    writeTextFile(path, serializeCache(entries));
-  } catch (err) {
-    console.error(`[bifrost] failed to save cache: ${err}`);
+function mergeCacheEntries(existing: CacheEntry[], incoming: CacheEntry[]): CacheEntry[] {
+  const merged = new Map<string, CacheEntry>();
+  for (const entry of existing) merged.set(entry.normalized, { ...entry });
+  for (const entry of incoming) {
+    const current = merged.get(entry.normalized);
+    if (!current) {
+      merged.set(entry.normalized, { ...entry });
+      continue;
+    }
+    const winner = (entry.lastUsed > current.lastUsed || (entry.lastUsed === current.lastUsed && (entry.seq ?? 0) >= (current.seq ?? 0)))
+      ? entry
+      : current;
+    merged.set(entry.normalized, {
+      ...current,
+      ...winner,
+      demotions: Math.max(current.demotions ?? 0, entry.demotions ?? 0),
+      synthetic: Boolean(current.synthetic || entry.synthetic),
+    });
   }
+  return [...merged.values()];
 }
 
-async function saveCacheAsync(path: string, entries: CacheEntry[]): Promise<boolean> {
-  const text = serializeCache(entries);
+function persistCache(path: string, entries: CacheEntry[]): boolean {
   try {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, text, "utf-8");
+    withFileLock(path, () => {
+      const merged = mergeCacheEntries(loadCache(path), entries);
+      writeTextFileAtomic(path, serializeCache(merged));
+    });
     return true;
   } catch (err) {
     console.error(`[bifrost] failed to save cache: ${err}`);
     return false;
   }
+}
+
+export function saveCache(path: string, entries: CacheEntry[]) {
+  persistCache(path, entries);
+}
+
+async function saveCacheAsync(path: string, entries: CacheEntry[]): Promise<boolean> {
+  return persistCache(path, entries);
 }
 
 export interface DeferredCacheWriter {
