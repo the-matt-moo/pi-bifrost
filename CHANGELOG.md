@@ -2,6 +2,12 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.22 - 05-09-2026
+
+### Fixed
+- Provider overload and transient gateway failures (`502`, `503`, and `504`) are now recognized as retryable limits, opening the affected model's circuit and allowing bounded fallback to a healthy model.
+- Relaxed the thinking-assessment performance regression threshold from 20µs to 40µs per 100 KB prompt to avoid false failures on slower environments.
+
 ## 4.5.21 - 05-09-2026
 
 ### Fixed

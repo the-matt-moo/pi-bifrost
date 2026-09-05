@@ -31,7 +31,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Candidate scoping | Full registry | Classifier model lookup and tier inference filter candidates to Pi's scoped-model selection, preventing routing to models the user has not enabled |
 | Image prompts | Routed like text-only prompts | Prefers vision-capable models; if the selected tier cannot take images, Bifrost falls back to higher tiers with image support |
 | Pin quota safety | Manual pin remains until explicitly removed | A pinned model that returns a 429 or rate-limit error is auto-unpinned immediately so the next prompt routes to a healthy model; quota-exhausted models are also unpinned proactively before the request; classified switches auto-pin to prevent context-loss churn |
-| Reliability | Threshold-based circuit breaker | Any final runtime provider error immediately opens that model's circuit (including `ResourceExhausted`); next prompt selects the next healthy model in the same category, then falls back to the default category if needed |
+| Reliability | Threshold-based circuit breaker | Any final runtime provider error immediately opens that model's circuit (including `ResourceExhausted`, 502/503/504, and overload errors); next prompt selects the next healthy model in the same category, then falls back to the default category if needed |
 | Config reconciliation | `init` only | Adds `/bifrost update --scoped/--free` to preview and merge discovery results while preserving manual entries |
 | Silent mode | Not available | `/bifrost silence` / `unsilence` suppresses console and UI output without disabling routing |
 | Error diagnostics | Raw stderr dumps | Structured error messages with corrective actions; `/bifrost doctor` validates config against live registry |
@@ -152,7 +152,7 @@ Run once after install:
 /bifrost init
 ```
 
-This probes every model you have access to, finds which ones respond, and writes a config. Successful probe results are reused for one hour; pass `--force` to retest immediately. Bifrost routes prompts from that point forward. If a selected model ends with a provider error, Bifrost opens its circuit immediately; replay-safe rate-limit failures can automatically retry on the next healthy model.
+This probes every model you have access to, finds which ones respond, and writes a config. Successful probe results are reused for one hour; pass `--force` to retest immediately. Bifrost routes prompts from that point forward. If a selected model ends with a provider error, Bifrost opens its circuit immediately; replay-safe rate-limit, overload, and transient 502/503/504 failures can automatically retry on the next healthy model.
 
 If `/bifrost init` has not been run, Bifrost auto-derives tier candidates at runtime from the live registry using `guessTier`. This works but skips probe-based ordering and quota preferences. Run `/bifrost init` for stable, reproducible routing.
 

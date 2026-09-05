@@ -26,6 +26,10 @@ describe("reliability", () => {
       "Error: Codex error: The usage limit has been reached",
       '{"error":{"type":"rate_limit_error","message":"limit exceeded"}}',
       "Insufficient credits. Please add funds.",
+      "Error: Upstream error from Nvidia: Service temporarily overloaded",
+      "HTTP 503: Service Unavailable",
+      "502 Bad Gateway",
+      "504 Gateway Timeout",
     ]) {
       assert.equal(isRetryableProviderLimit(reason), true, reason);
     }

@@ -116,7 +116,7 @@ export function getCircuitState(
 const TRANSIENT_LIMIT_COOLDOWN_MS = 45_000;
 
 export function isRetryableProviderLimit(reason: string): boolean {
-  return /\b429\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)|quota_exceeded|rate_limit|insufficient.*(?:quota|balance|credit)/i.test(reason);
+  return /\b429\b|\b50[234]\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)|quota_exceeded|rate_limit|insufficient.*(?:quota|balance|credit)|temporarily overloaded|overloaded|service unavailable/i.test(reason);
 }
 
 function isTransientProviderLimit(reason: string): boolean {

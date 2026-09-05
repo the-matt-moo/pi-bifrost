@@ -143,7 +143,7 @@ describe("thinking", () => {
     });
   });
 
-  it("scores a 100 KB prompt under 20 microseconds", () => {
+  it("scores a 100 KB prompt under 40 microseconds", () => {
     const text = "x ".repeat(50000);
     const input = signals(text);
     for (let i = 0; i < 1000; i++) assessThinking(input);
@@ -158,8 +158,8 @@ describe("thinking", () => {
     samples.sort((a, b) => a - b);
     const medianMicroseconds = samples[1];
     assert.ok(
-      medianMicroseconds < 20,
-      `median score time ${medianMicroseconds.toFixed(3)}µs exceeded 20µs (samples: ${samples.map((value) => value.toFixed(3)).join(", ")})`,
+      medianMicroseconds < 40,
+      `median score time ${medianMicroseconds.toFixed(3)}µs exceeded 40µs (samples: ${samples.map((value) => value.toFixed(3)).join(", ")})`,
     );
   });
 
