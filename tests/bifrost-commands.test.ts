@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createCommandRouter, getBifrostCommandCompletions, type BifrostState } from "../commands.ts";
+import { createCommandRouter, currentBifrostModeState, getBifrostCommandCompletions, type BifrostState } from "../commands.ts";
 
 function makeCtx() {
   const calls: Array<{ kind: string; value?: unknown; title?: string; options?: string[]; lines?: string[] }> = [];
@@ -86,6 +86,11 @@ function makeState(saveModeState: () => void = () => {}) {
 }
 
 describe("bifrost command ui", () => {
+  it("reports the category selected by routing", () => {
+    const state = { ...makeState(), modelCategory: "general" };
+    assert.equal(currentBifrostModeState(state as never).modelCategory, "general");
+  });
+
   it("surfaces command descriptions in autocomplete", () => {
     const items = getBifrostCommandCompletions("class") ?? [];
     assert(items.some((item) => item.value === "classifier status" && item.description === "Show classifier state"));

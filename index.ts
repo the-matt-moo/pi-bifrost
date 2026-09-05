@@ -256,6 +256,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     thinkingMode: runtimeState.thinkingMode ?? "off",
     thinkingPinned: false,
     thinkingLevel: "off",
+    modelCategory: undefined,
     pinned: runtimeState.pinned,
     silent: runtimeState.silent,
     cacheEntries,
@@ -586,6 +587,8 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       return;
     }
 
+    state.modelCategory = resolved.selectedTier ?? tier;
+    syncBifrostModeStatus(ctx, state);
     const nextRetry = { ...retry, autoRetryCount: retry.autoRetryCount + 1 };
     runtimeReliability.begin(nextKey, nextRetry);
     const replayContent = retry.images?.length
@@ -642,6 +645,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
     sessionContext.reset();
     state.pinned = true;
+    state.modelCategory = undefined;
     state.saveModeState();
     debug("bifrost", "model_select", { model: selectedModel });
     syncBifrostModeStatus(ctx, state);
@@ -909,6 +913,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
           log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${pinSource}]`);
         }
         applyThinking();
+        state.modelCategory = selectedTier;
         uiDone(ctx);
         syncBifrostModeStatus(ctx, state);
         const reason = resolved.fallbackReason ? `, ${resolved.fallbackReason}` : "";
@@ -956,6 +961,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       }
 
       applyThinking();
+      state.modelCategory = selectedTier;
 
       const detail = [
         selectedTier !== tier ? `selected tier ${selectedTier}` : undefined,

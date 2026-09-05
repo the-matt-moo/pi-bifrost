@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.5.18 - 04-09-2026
+
+### Fixed
+- Status consumers such as Pi Atelier now receive the category actually selected by routing instead of a context-window heuristic that mislabeled large-context models as `frontier`.
+
 ## 4.5.17 - 01-09-2026
 
 ### Fixed

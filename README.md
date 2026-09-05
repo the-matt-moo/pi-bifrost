@@ -78,6 +78,7 @@ Bifrost: <tier> → <model> (<source>; N skipped)
 - the trailing `(source; N skipped)` note is grey.
 - when pinned, the category slot shows `pinned` in hot pink: `Bifrost: pinned → <model>`.
 - when thinking is pinned, the mode status shows `think:pinned` in orange. This reflects a thinking-only pin and is independent of whether the model is pinned.
+- `statusline.json` exposes the category actually selected by routing; dashboards such as Pi Atelier should not infer it from model cost or context size.
 
 ### Routing Suffix
 

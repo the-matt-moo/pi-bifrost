@@ -21,7 +21,7 @@ import {
   type DiscoveryOptions,
   type DiscoveryResult,
 } from "./discovery.ts";
-import { setBifrostModeStatus, setBifrostStatus } from "./ux-status.ts";
+import { setBifrostModeStatus, setBifrostStatus, type BifrostModeState } from "./ux-status.ts";
 import { showBifrostResult } from "./result-viewer.ts";
 import {
   getStrategy,
@@ -50,6 +50,7 @@ export interface BifrostState {
   thinkingMode: "off" | "advisory" | "apply";
   thinkingPinned: boolean;
   thinkingLevel: ThinkingLevel;
+  modelCategory?: string;
   lastThinkingDecision?: { score: number; level: ThinkingLevel; reasons: string[] };
   previewThinking?: (
     prompt: string,
@@ -196,8 +197,14 @@ export function clearBifrostWidgets(ctx: ExtensionContext) {
   }
 }
 
-export function syncBifrostModeStatus(ctx: ExtensionContext, state: Pick<BifrostState, "enabled" | "pinned" | "classifierEnabled" | "silent" | "thinkingMode" | "thinkingPinned">) {
-  setBifrostModeStatus(ctx, { ...state, modelCategory: ctx.model ? guessTier(ctx.model) : undefined });
+export function currentBifrostModeState(
+  state: Pick<BifrostState, "enabled" | "pinned" | "classifierEnabled" | "silent" | "thinkingMode" | "thinkingPinned" | "modelCategory">,
+): BifrostModeState {
+  return { ...state };
+}
+
+export function syncBifrostModeStatus(ctx: ExtensionContext, state: Parameters<typeof currentBifrostModeState>[0]) {
+  setBifrostModeStatus(ctx, currentBifrostModeState(state));
 }
 
 function openCircuitCount(state: BifrostState, now = Date.now()): number {
