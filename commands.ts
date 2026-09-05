@@ -168,18 +168,6 @@ export function uiDone(ctx: ExtensionContext) {
   }
 }
 
-function uiOutput(ctx: ExtensionContext, lines: string[]) {
-  if (isBifrostSilent(ctx)) return;
-  finalizeOverwrite();
-  if (ctx.mode === "tui") {
-    if (ctx.hasUI) {
-      ctx.ui.setWidget("bifrost-output", lines);
-    }
-  } else {
-    for (const line of lines) console.error(`[bifrost] ${line}`);
-  }
-}
-
 async function uiResult(ctx: ExtensionContext, title: string, lines: string[]): Promise<void> {
   if (isBifrostSilent(ctx)) return;
   finalizeOverwrite();
@@ -579,9 +567,8 @@ async function handleInit(
     for (const key of probeErrors) summaryLines.push(`  ${key}`);
   }
   if (!probeLoaded) summaryLines.push("", "warning: no probe data — run /bifrost probe first to filter unreachable models");
-  summaryLines.push("--------------------");
 
-  uiOutput(ctx, summaryLines);
+  await uiResult(ctx, "bifrost init", summaryLines);
 
   const writeWithoutPrompt = args.trim().split(/\s+/).includes("--write");
   if (!ctx.hasUI && !writeWithoutPrompt) {
@@ -703,8 +690,7 @@ async function handleDiscoveryReconcile(
     .map((result) => `${result.provider}/${result.model} (${result.status}${result.error ? `: ${result.error}` : ""})`)
     .sort();
 
-  uiOutput(ctx, [
-    `--- ${verb} ---`,
+  const lines = [
     `discovery: ${discoverySourceLine(discovery)}`,
     `probe: ${verifiedKeys.size} working, ${probeSkipped.length} skipped`,
     ...discovery.skipped.map((item) => `skipped discovery: ${item}`),
@@ -715,8 +701,9 @@ async function handleDiscoveryReconcile(
     ...(diff.removed.length > 0 ? diff.removed.map((item) => `  - ${item.model} <- ${item.tier}`) : ["  (none)"]),
     "proposed config:",
     JSON.stringify(diff.config, null, 2),
-    "--------------",
-  ]);
+  ];
+
+  await uiResult(ctx, `bifrost ${verb}`, lines);
 
   const writeWithoutPrompt = args.trim().split(/\s+/).includes("--write");
   if (!ctx.hasUI && !writeWithoutPrompt) {
@@ -1308,7 +1295,7 @@ export function createCommandRouter(
     }),
 
     // Providers
-    exact("providers", "List available providers", (_, ctx) => {
+    exact("providers", "List available providers", async (_, ctx) => {
       uiBusy(ctx, "Loading providers...");
       const available = ctx.modelRegistry.getAvailable();
       const counts = new Map<string, number>();
@@ -1316,12 +1303,10 @@ export function createCommandRouter(
         counts.set(m.provider, (counts.get(m.provider) ?? 0) + 1);
       }
       uiDone(ctx);
-      uiOutput(ctx, [
-        "available providers:",
-        ...Array.from(counts.entries()).map(
-          ([provider, count]) => `  ${provider}: ${count} model(s)`,
-        ),
-      ]);
+      const lines = Array.from(counts.entries()).map(
+        ([provider, count]) => `  ${provider}: ${count} model(s)`,
+      );
+      await uiResult(ctx, "available providers", lines);
     }),
 
     // Probe — test every model with a tiny prompt
@@ -1369,10 +1354,9 @@ export function createCommandRouter(
 
         if (errs.length > 0) {
           lines.push("errors:");
-          for (const e of errs.slice(0, 10)) {
+          for (const e of errs) {
             lines.push(`  ${e.provider}/${e.model} — ${e.error}`);
           }
-          if (errs.length > 10) lines.push(`  ... and ${errs.length - 10} more`);
         }
 
         if (timeouts.length > 0) {
@@ -1383,7 +1367,7 @@ export function createCommandRouter(
         }
 
         lines.push("", `full results → ${path}`);
-        uiOutput(ctx, lines);
+        await uiResult(ctx, `bifrost probe (${results.length} models, ${cached} cached)`, lines);
 
         if (ok.length < results.length) {
           log(
@@ -1490,11 +1474,10 @@ export function createCommandRouter(
     }),
 
     // Debug — show loaded config state
-    exact("debug", "Show config and routing state", (_, ctx) => {
+    exact("debug", "Show config and routing state", async (_, ctx) => {
       const rules = state.config.rules ?? [];
       const tiers = Object.keys(state.config.models ?? {});
       const lines = [
-        "--- config ---",
         `cwd: ${process.cwd()}`,
         `enabled: ${state.enabled}`,
         `pinned: ${state.pinned}`,
@@ -1510,10 +1493,8 @@ export function createCommandRouter(
         "",
         `rules (${rules.length}):`,
         ...rules.map((r, i) => `  ${i}: "${r.pattern}" → "${r.model}"`),
-        "---",
       ];
-      uiOutput(ctx, lines);
-      log(ctx, "debug info printed above");
+      await uiResult(ctx, "bifrost debug", lines);
     }),
 
     exact("doctor", "Validate config against available models", async (_, ctx) => {
@@ -1546,11 +1527,9 @@ export function createCommandRouter(
       }
 
       const lines = [
-        `--- doctor (${diagnostics.length} issue${diagnostics.length === 1 ? "" : "s"}) ---`,
         ...diagnostics.map(d => `  [${d.severity}] ${formatDiagnostic(d)}`),
-        "---",
       ];
-      uiOutput(ctx, lines);
+      await uiResult(ctx, `bifrost doctor (${diagnostics.length} issue${diagnostics.length === 1 ? "" : "s"})`, lines);
     }),
 
     prefix("preview", "Preview routing for a prompt", (args, ctx) => handlePreview(args, ctx, state), "<prompt>"),
