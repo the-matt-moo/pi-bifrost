@@ -5,9 +5,10 @@
 //
 // Configure: { "debug": { "enabled": true, "path": ".pi/bifrost-debug.jsonl" } }
 
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync } from "node:fs";
 import { appendFile, rename, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { appendFileSync } from "node:fs";
 
@@ -91,14 +92,14 @@ function flushSync(): void {
 
 // ── Setup ─────────────────────────────────────────────────────────
 
-export function setupDebug(cfg: DebugConfig, cwd: string) {
+export function setupDebug(cfg: DebugConfig, _cwd: string) {
   debugEnabled = cfg.enabled ?? false;
   if (cfg.path) {
     debugPath = cfg.path.startsWith("/") || cfg.path.startsWith("~")
       ? cfg.path.replace(/^~/, process.env.HOME ?? "/tmp")
-      : `${cwd}/${cfg.path}`;
+      : join(getAgentDir(), cfg.path);
   } else {
-    debugPath = `${cwd}/.pi/bifrost-debug.jsonl`;
+    debugPath = join(getAgentDir(), "bifrost-debug.jsonl");
   }
 
   if (debugEnabled && !startupDone) {

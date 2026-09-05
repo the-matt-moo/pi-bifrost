@@ -5,19 +5,30 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runProbe } from "../probe.ts";
 
+// Probe results persist to the agent dir (~/.pi/agent/bifrost-probe.json), so
+// tests must redirect PI_CODING_AGENT_DIR to a temp dir for isolation.
+async function withTempAgentDir(fn: (cwd: string) => Promise<void> | void): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), "bifrost-probe-"));
+  const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = cwd;
+  try {
+    await fn(cwd);
+  } finally {
+    process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
 describe("probe transport", () => {
   it("uses provider.streamSimple", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "bifrost-probe-"));
-    const model = {
-      provider: "openai-codex",
-      id: "gpt-5.4-mini",
-      api: "openai-codex-responses",
-      cost: { input: 0.75, output: 4.5 },
-      baseUrl: "https://example.invalid/v1",
-    };
-    const cwdBefore = process.cwd();
-
-    try {
+    await withTempAgentDir(async () => {
+      const model = {
+        provider: "openai-codex",
+        id: "gpt-5.4-mini",
+        api: "openai-codex-responses",
+        cost: { input: 0.75, output: 4.5 },
+        baseUrl: "https://example.invalid/v1",
+      };
       const ctx = {
         modelRegistry: {
           getAvailable: () => [model],
@@ -46,30 +57,22 @@ describe("probe transport", () => {
         },
       } as never;
 
-      process.chdir(cwd);
       const result = await runProbe(ctx);
       assert.equal(result.results[0]?.status, "ok");
       assert.equal(result.results[0]?.model, "gpt-5.4-mini");
-    } finally {
-      process.chdir(cwdBefore);
-      rmSync(cwd, { recursive: true, force: true });
-    }
+    });
   });
 
   it("treats thinking-only stream response as ok", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "bifrost-probe-"));
-    const model = {
-      provider: "openai-codex",
-      id: "gpt-5.4-mini",
-      api: "openai-codex-responses",
-      cost: { input: 0.75, output: 4.5 },
-      baseUrl: "https://example.invalid/v1",
-    };
-    const cwdBefore = process.cwd();
-
-    try {
+    await withTempAgentDir(async () => {
+      const model = {
+        provider: "openai-codex",
+        id: "gpt-5.4-mini",
+        api: "openai-codex-responses",
+        cost: { input: 0.75, output: 4.5 },
+        baseUrl: "https://example.invalid/v1",
+      };
       const ctx = {
-        cwd,
         modelRegistry: {
           getAvailable: () => [model],
           getProvider: () => ({
@@ -97,30 +100,22 @@ describe("probe transport", () => {
         },
       } as never;
 
-      process.chdir(cwd);
       const result = await runProbe(ctx);
       assert.equal(result.results[0]?.status, "ok");
       assert.equal(result.results[0]?.model, "gpt-5.4-mini");
-    } finally {
-      process.chdir(cwdBefore);
-      rmSync(cwd, { recursive: true, force: true });
-    }
+    });
   });
 
   it("returns error when stream stopReason is error", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "bifrost-probe-"));
-    const model = {
-      provider: "openai-codex",
-      id: "gpt-5.4-mini",
-      api: "openai-codex-responses",
-      cost: { input: 0.75, output: 4.5 },
-      baseUrl: "https://example.invalid/v1",
-    };
-    const cwdBefore = process.cwd();
-
-    try {
+    await withTempAgentDir(async () => {
+      const model = {
+        provider: "openai-codex",
+        id: "gpt-5.4-mini",
+        api: "openai-codex-responses",
+        cost: { input: 0.75, output: 4.5 },
+        baseUrl: "https://example.invalid/v1",
+      };
       const ctx = {
-        cwd,
         modelRegistry: {
           getAvailable: () => [model],
           getProvider: () => ({
@@ -149,50 +144,43 @@ describe("probe transport", () => {
         },
       } as never;
 
-      process.chdir(cwd);
       const result = await runProbe(ctx);
       assert.equal(result.results[0]?.status, "error");
       assert.equal(result.results[0]?.model, "gpt-5.4-mini");
-    } finally {
-      process.chdir(cwdBefore);
-      rmSync(cwd, { recursive: true, force: true });
-    }
+    });
   });
 
   it("reuses fresh successful probes and honors force", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "bifrost-probe-cache-"));
-    const cwdBefore = process.cwd();
-    const model = {
-      provider: "test",
-      id: "fast",
-      api: "openai-completions",
-      baseUrl: "https://example.invalid/v1",
-      cost: { input: 0, output: 0 },
-    };
-    const otherModel = { ...model, id: "other" };
-    let available = [model, otherModel];
-    let calls = 0;
-    const ctx = {
-      modelRegistry: {
-        getAvailable: () => available,
-        getProvider: () => ({
-          streamSimple: () => ({
-            result: async () => {
-              calls++;
-              return {
-                content: [{ type: "text", text: "2" }],
-                usage: { totalTokens: 2 },
-                stopReason: "stop",
-              };
-            },
+    await withTempAgentDir(async () => {
+      const model = {
+        provider: "test",
+        id: "fast",
+        api: "openai-completions",
+        baseUrl: "https://example.invalid/v1",
+        cost: { input: 0, output: 0 },
+      };
+      const otherModel = { ...model, id: "other" };
+      let available = [model, otherModel];
+      let calls = 0;
+      const ctx = {
+        modelRegistry: {
+          getAvailable: () => available,
+          getProvider: () => ({
+            streamSimple: () => ({
+              result: async () => {
+                calls++;
+                return {
+                  content: [{ type: "text", text: "2" }],
+                  usage: { totalTokens: 2 },
+                  stopReason: "stop",
+                };
+              },
+            }),
           }),
-        }),
-        getProviderAuth: async () => ({ auth: { apiKey: "key" } }),
-      },
-    } as never;
+          getProviderAuth: async () => ({ auth: { apiKey: "key" } }),
+        },
+      } as never;
 
-    try {
-      process.chdir(cwd);
       const first = await runProbe(ctx);
       assert.equal(first.cached, 0);
       assert.equal(calls, 2);
@@ -208,9 +196,6 @@ describe("probe transport", () => {
       const preserved = await runProbe(ctx);
       assert.equal(preserved.cached, 1);
       assert.equal(calls, 3);
-    } finally {
-      process.chdir(cwdBefore);
-      rmSync(cwd, { recursive: true, force: true });
-    }
+    });
   });
 });

@@ -43,7 +43,7 @@ describe("config load", () => {
     }
   });
 
-  it("merges extension, global, cwd, and project configs in order", () => {
+  it("merges extension and global configs, global wins", () => {
     const cwd = mkdtempSync(join(tmpdir(), "bifrost-config-"));
     const extensionDir = mkdtempSync(join(tmpdir(), "bifrost-extension-"));
     const home = mkdtempSync(join(tmpdir(), "bifrost-home-"));
@@ -66,21 +66,21 @@ describe("config load", () => {
       });
 
       writeJson(join(getAgentDir(), "bifrost.json"), {
-        default: "frontier",
-        categoryStrategies: { general: "cheapest" },
-        models: { general: ["global-general"] },
-      });
-
-      writeJson(join(cwd, "bifrost.json"), {
         enabled: true,
         silent: false,
+        default: "frontier",
         strategy: "random",
-        models: { frontier: ["cwd-frontier"] },
+        categoryStrategies: { general: "cheapest" },
+        models: { general: ["global-general"], quick: ["global-quick"] },
       });
 
+      // Per-project configs must NOT influence routing.
+      writeJson(join(cwd, "bifrost.json"), {
+        default: "quick",
+        models: { frontier: ["cwd-frontier"] },
+      });
       writeJson(join(cwd, ".pi", "bifrost.json"), {
-        default: "frontier",
-        models: { quick: ["project-quick"], general: ["project-general"] },
+        models: { quick: ["project-quick"] },
       });
 
       const config = loadConfig(cwd, extensionDir);
@@ -95,9 +95,8 @@ describe("config load", () => {
         frontier: "first",
       });
       assert.deepEqual(config.models, {
-        quick: ["project-quick"],
-        general: ["project-general"],
-        frontier: ["cwd-frontier"],
+        quick: ["global-quick"],
+        general: ["global-general"],
       });
     } finally {
       process.env.HOME = oldHome;
@@ -119,14 +118,14 @@ describe("config load", () => {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     try {
       writeFileSync(join(extensionDir, "bifrost.json"), "{not json", "utf8");
-      writeJson(join(cwd, "bifrost.json"), {
+      writeJson(join(getAgentDir(), "bifrost.json"), {
         default: "quick",
-        models: { quick: ["cwd-quick"] },
+        models: { quick: ["agent-quick"] },
       });
 
       const config = loadConfig(cwd, extensionDir);
       assert.equal(config.default, "quick");
-      assert.deepEqual(config.models, { quick: ["cwd-quick"] });
+      assert.deepEqual(config.models, { quick: ["agent-quick"] });
     } finally {
       process.env.HOME = oldHome;
       process.env.PI_CODING_AGENT_DIR = oldAgentDir;

@@ -33,8 +33,8 @@ export const DEFAULT_RUNTIME_STATE: RuntimeModeState = {
   silent: false,
 };
 
-export function runtimeStatePath(cwd: string): string {
-  return resolveStoragePath(cwd, undefined, ".pi/bifrost-state.json");
+export function runtimeStatePath(_cwd: string): string {
+  return resolveStoragePath(_cwd, undefined, "bifrost-state.json");
 }
 
 export function loadRuntimeState(path: string, fallback: RuntimeModeState = DEFAULT_RUNTIME_STATE): RuntimeModeState {

@@ -1,8 +1,16 @@
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 
+/**
+ * Resolve a storage path. Global runtime artifacts (state/cache/reliability)
+ * live under the agent dir (~/.pi/agent) so behavior is identical regardless
+ * of cwd. An explicitly configured absolute path is returned as-is; "~"
+ * expands to HOME; any other configured (or default) relative path resolves
+ * against the agent dir.
+ */
 export function resolveStoragePath(
-  cwd: string,
+  _cwd: string,
   configuredPath: string | undefined,
   defaultRelativePath: string,
 ): string {
@@ -11,9 +19,9 @@ export function resolveStoragePath(
     if (configuredPath.startsWith("~")) {
       return (process.env.HOME ?? "/tmp") + configuredPath.slice(1);
     }
-    return join(cwd, configuredPath);
+    return join(getAgentDir(), configuredPath);
   }
-  return join(cwd, defaultRelativePath);
+  return join(getAgentDir(), defaultRelativePath);
 }
 
 export function readTextFile(path: string): string | undefined {

@@ -242,12 +242,16 @@ If `"thinking": { "mode": "apply" }` is set in config, Bifrost assesses prompt c
 
 ## Config
 
-Config merges from multiple paths (later wins):
+Config merges from two paths (agent dir wins):
 
 1. Extension default (`<extensionDir>/bifrost.json`)
 2. Global (`~/.pi/agent/bifrost.json`)
-3. Project root (`bifrost.json`)
-4. Project config (`.pi/bifrost.json`)
+
+There is no per-project config layer: routing and runtime state are global, so
+behavior is identical in every cwd. `/bifrost init`, `refresh`, `update`,
+`add-model`, and `remove-model` all write to `~/.pi/agent/bifrost.json`, and
+the runtime artifacts (state, cache, probe results, reliability, debug log)
+live alongside it under `~/.pi/agent/`.
 
 Minimal config after `init`:
 

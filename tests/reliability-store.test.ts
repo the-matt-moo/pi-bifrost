@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   DEFAULT_RELIABILITY,
   emptyReliabilityState,
@@ -115,15 +118,25 @@ describe("reliability store", () => {
     assert.equal(store.getState().models["x"]?.lastSuccessAt, 42);
   });
 
-  it("reload swaps path when cwd changes", () => {
+  it("path is agent-dir based and does not change across cwds", () => {
     const io: ReliabilityIo = {
       load: (path: string) => ({ version: 1, models: {}, _path: path } as unknown as ReturnType<ReliabilityIo["load"]>),
       save: () => {},
     };
-    const store = new ReliabilityStore({ cwd: "/proj-a", config: cfg, io });
-    assert.match(store.path, /proj-a/);
-    store.reload(cfg, "/proj-b");
-    assert.match(store.path, /proj-b/);
+    const agentDir = mkdtempSync(join(tmpdir(), "bifrost-agent-"));
+    const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    try {
+      const store = new ReliabilityStore({ cwd: "/proj-a", config: cfg, io });
+      assert.ok(store.path.includes("bifrost-reliability.json"));
+      assert.ok(!store.path.includes("/proj-a"), "path must not be cwd-relative");
+      const before = store.path;
+      store.reload(cfg, "/proj-b");
+      assert.equal(store.path, before);
+    } finally {
+      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      rmSync(agentDir, { recursive: true, force: true });
+    }
   });
 
   it("two store instances on same file see each other after persist", () => {

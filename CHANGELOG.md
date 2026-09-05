@@ -2,6 +2,24 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## Unreleased
+
+### Changed
+- Config is now global-only: `~/.pi/agent/bifrost.json` is the single source
+  of truth (highest precedence) and the only config file read besides the
+  extension default. Per-project layers (`bifrost.json`, `.pi/bifrost.json`)
+  are no longer loaded, so routing is identical in every cwd.
+- `/bifrost init`, `refresh`, `update`, `add-model`, and `remove-model` now
+  write `~/.pi/agent/bifrost.json` instead of `<cwd>/.pi/bifrost.json`.
+- Runtime artifacts (state, classification cache, probe results, reliability,
+  and debug log) moved from `<cwd>/.pi/` to `~/.pi/agent/`, so they are
+  shared across sessions and no longer depend on cwd.
+
+### Removed
+- `/bifrost sync` command. It shelled out to `sync-bifrost.ps1` in the
+  `pi-profile` repo, which was deleted upstream (pi-profile v1.3.9 removed
+  bifrost sync in favor of local per-machine maintenance).
+
 ## 4.5.18 - 04-09-2026
 
 ### Fixed

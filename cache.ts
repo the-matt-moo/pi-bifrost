@@ -281,8 +281,8 @@ export function updateCache(
   );
 }
 
-export function cachePath(cwd: string, configuredPath?: string): string {
-  return resolveStoragePath(cwd, configuredPath, ".pi/bifrost-cache.jsonl");
+export function cachePath(_cwd: string, configuredPath?: string): string {
+  return resolveStoragePath(_cwd, configuredPath, "bifrost-cache.jsonl");
 }
 
 export function warmStartCache(

@@ -3,6 +3,7 @@
 // Used by /bifrost probe to surface real-world model health.
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -54,7 +55,7 @@ export async function runProbe(
 ): Promise<{ results: ProbeResult[]; freshResults: ProbeResult[]; path: string; cached: number }> {
   const available = models ?? ctx.modelRegistry.getAvailable();
   const total = available.length;
-  const outputPath = join(process.cwd(), ".pi", "bifrost-probe.json");
+  const outputPath = join(getAgentDir(), "bifrost-probe.json");
   const ttlMs = options.ttlMs ?? PROBE_RESULT_TTL_MS;
   const now = options.now ?? Date.now();
   const cachedByKey = new Map<string, ProbeResult>();

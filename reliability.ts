@@ -235,8 +235,8 @@ export function recordSetModelOutcome(
   return recordModelFailure(state, modelKey, config, now, "setModel", reason);
 }
 
-export function reliabilityPath(cwd: string, configuredPath?: string): string {
-  return resolveStoragePath(cwd, configuredPath, ".pi/bifrost-reliability.json");
+export function reliabilityPath(_cwd: string, configuredPath?: string): string {
+  return resolveStoragePath(_cwd, configuredPath, "bifrost-reliability.json");
 }
 
 export function loadReliability(path: string): ReliabilityState {

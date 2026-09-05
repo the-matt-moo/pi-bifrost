@@ -1,4 +1,4 @@
-import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { readJsonFile } from "./storage.ts";
 import type { RoutingStrategy, RouteRule } from "./routing.ts";
@@ -218,7 +218,7 @@ export function validateConfig(
     issues.push({
       severity: "error",
       message:
-        'No tiers configured in "models". Add at least one tier to .pi/bifrost.json.',
+        'No tiers configured in "models". Add at least one tier to ~/.pi/agent/bifrost.json.',
     });
   }
 
@@ -410,7 +410,7 @@ export function mergeConfig(
 }
 
 export function loadConfig(
-  cwd: string,
+  _cwd: string,
   extensionDir: string,
 ): BifrostConfig {
   const base: BifrostConfig = {
@@ -431,8 +431,6 @@ export function loadConfig(
   const configs = [
     readJson<BifrostConfig>(join(extensionDir, "bifrost.json")),
     readJson<BifrostConfig>(join(getAgentDir(), "bifrost.json")),
-    readJson<BifrostConfig>(join(cwd, "bifrost.json")),
-    readJson<BifrostConfig>(join(cwd, CONFIG_DIR_NAME, "bifrost.json")),
   ];
 
   let merged: BifrostConfig = base;
@@ -442,10 +440,9 @@ export function loadConfig(
   return merged;
 }
 
-export function loadRules(cwd: string, config: BifrostConfig): RouteRule[] {
+export function loadRules(_cwd: string, config: BifrostConfig): RouteRule[] {
   const routeFiles = [
-    join(cwd, CONFIG_DIR_NAME, "bifrost-routes.json"),
-    join(cwd, "bifrost-routes.json"),
+    join(getAgentDir(), "bifrost-routes.json"),
   ];
 
   for (const p of routeFiles) {

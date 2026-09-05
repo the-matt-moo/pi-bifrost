@@ -1,9 +1,8 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CONFIG_DIR_NAME, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { loadRuntimeState, runtimeStatePath } from "./runtime-state.ts";
 import type { BifrostConfig } from "./config.ts";
 import type { ThinkingLevel } from "./thinking.ts";
@@ -364,7 +363,7 @@ async function refreshAndDiscover(
 }
 
 function writeAndReloadConfig(config: BifrostConfig, state: BifrostState): void {
-  const dir = join(process.cwd(), CONFIG_DIR_NAME);
+  const dir = getAgentDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "bifrost.json"), JSON.stringify(config, null, 2));
 
@@ -596,7 +595,7 @@ async function handleInit(
   ].filter(Boolean).join(". ");
 
   const ok = writeWithoutPrompt || await ctx.ui.confirm(
-    "Write config to .pi/bifrost.json?",
+    "Write config to agent bifrost.json?",
     `${confirmBody}.`,
   );
   if (!ok) {
@@ -606,7 +605,7 @@ async function handleInit(
 
   writeAndReloadConfig(proposal as BifrostConfig, state);
 
-  log(ctx, "wrote .pi/bifrost.json and reloaded config");
+  log(ctx, "wrote ~/.pi/agent/bifrost.json and reloaded config");
   log(ctx, `Bifrost active with ${Object.keys(state.config.models ?? {}).length} tier(s). Try a prompt.`);
 
   // Clear the init widget so it doesn't persist in the TUI.
@@ -688,7 +687,7 @@ async function handleDiscoveryReconcile(
     });
   }
 
-  const configPath = join(process.cwd(), CONFIG_DIR_NAME, "bifrost.json");
+  const configPath = join(getAgentDir(), "bifrost.json");
   const current = readJson<BifrostConfig>(configPath) ?? state.config;
   
   const diff = reconcileDiscoveredModels(current, discovery, selected, verifiedKeys);
@@ -742,7 +741,7 @@ async function handleDiscoveryReconcile(
   }
 
   writeAndReloadConfig(diff.config, state);
-  log(ctx, `Updated .pi/bifrost.json: +${diff.added.length} -${diff.removed.length}.`);
+  log(ctx, `Updated agent bifrost.json: +${diff.added.length} -${diff.removed.length}.`);
 }
 
 async function handleBenchmark(
@@ -794,51 +793,6 @@ async function handleBenchmark(
 
   lines.push("-----------------");
   await uiResult(ctx, "Bifrost benchmark", lines);
-}
-
-async function handleSync(
-  args: string,
-  ctx: ExtensionContext,
-  state: BifrostState,
-): Promise<void> {
-  clearBifrostWidgets(ctx);
-  const dryRun = args.includes("--dry-run");
-  const githubPath = process.env.GITHUB_PATH ?? join(process.env.USERPROFILE ?? "", "Github");
-  const profileDir = join(githubPath, "pi-profile");
-  const scriptPath = join(profileDir, "scripts", "sync-bifrost.ps1");
-
-  if (!existsSync(scriptPath)) {
-    log(ctx, `Sync script not found: ${scriptPath} (set GITHUB_PATH to override)`, "error");
-    return;
-  }
-
-  setBifrostStatus(ctx, "Syncing bifrost config to pi-profile...", "accent");
-  uiBusy(ctx, "Running sync-bifrost.ps1...");
-
-  const { stdout, stderr, exitCode } = await new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath, ...(dryRun ? ["-DryRun"] : [])], {
-      cwd: profileDir,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (d) => (stdout += d.toString()));
-    child.stderr.on("data", (d) => (stderr += d.toString()));
-    child.on("close", (code) => resolve({ stdout, stderr, exitCode: code ?? 0 }));
-  });
-
-  uiDone(ctx);
-  syncBifrostModeStatus(ctx, state);
-
-  if (exitCode !== 0) {
-    log(ctx, `Sync failed (exit ${exitCode}): ${stderr.slice(0, 500)}`, "error");
-    return;
-  }
-
-  if (stdout.trim()) {
-    uiOutput(ctx, stdout.trim().split("\n"));
-  }
-  log(ctx, dryRun ? "Dry-run complete — no changes written" : "Sync complete");
 }
 
 async function handlePreview(
@@ -1001,7 +955,7 @@ async function handleAddModel(
   }
 
   // Add to active bifrost.json
-  const configPath = join(process.cwd(), CONFIG_DIR_NAME, "bifrost.json");
+  const configPath = join(getAgentDir(), "bifrost.json");
   const current = readJson<BifrostConfig>(configPath) ?? state.config;
 
   const categories = Object.keys(current.models ?? {});
@@ -1075,47 +1029,6 @@ async function handleAddModel(
   writeAndReloadConfig(current, state);
   log(ctx, `Updated bifrost.json categories for "${key}"`);
 
-  // Also update agent-level override bifrost.json
-  const agentBifrostPath = join(getAgentDir(), "bifrost.json");
-  if (existsSync(agentBifrostPath)) {
-    const agentCurrent = readJson<BifrostConfig>(agentBifrostPath) ?? {};
-    let agentUpdated = false;
-
-    // Add to categories
-    agentCurrent.models = agentCurrent.models ?? {};
-    for (const cat of selectedCategories) {
-      const list = agentCurrent.models[cat];
-      if (Array.isArray(list)) {
-        if (!list.includes(key)) {
-          list.push(key);
-          agentUpdated = true;
-        }
-      } else if (typeof list === "string") {
-        if (list !== key) {
-          agentCurrent.models[cat] = [list, key];
-          agentUpdated = true;
-        }
-      } else {
-        agentCurrent.models[cat] = [key];
-        agentUpdated = true;
-      }
-    }
-
-    // Mark as scoped in discovery
-    agentCurrent.discovery = agentCurrent.discovery ?? { managed: {} };
-    agentCurrent.discovery.managed = agentCurrent.discovery.managed ?? {};
-    const agentManagedSources = agentCurrent.discovery.managed[key] ?? [];
-    if (!agentManagedSources.includes("scoped")) {
-      agentCurrent.discovery.managed[key] = [...agentManagedSources, "scoped"];
-      agentUpdated = true;
-    }
-
-    if (agentUpdated) {
-      writeFileSync(agentBifrostPath, JSON.stringify(agentCurrent, null, 2));
-      log(ctx, `Also added "${key}" to agent-level bifrost.json categories: ${[...selectedCategories].join(", ")}`);
-    }
-  }
-
   // Run registry refresh
   uiBusy(ctx, "Refreshing registry...");
   try {
@@ -1173,7 +1086,7 @@ async function handleRemoveModel(
   }
 
   // Check if model is in bifrost.json (models and discovery.managed)
-  const configPath = join(process.cwd(), CONFIG_DIR_NAME, "bifrost.json");
+  const configPath = join(getAgentDir(), "bifrost.json");
   const current = readJson<BifrostConfig>(configPath) ?? state.config;
 
   let wasInBifrost = false;
@@ -1201,42 +1114,9 @@ async function handleRemoveModel(
     return;
   }
 
-  // Check and remove from agent-level override bifrost.json
-  const agentBifrostPath = join(getAgentDir(), "bifrost.json");
-  let wasInAgentBifrost = false;
-  let removedFromAgentCategories: string[] = [];
-  if (existsSync(agentBifrostPath)) {
-    const agentCurrent = readJson<BifrostConfig>(agentBifrostPath) ?? {};
-    const agentModels = agentCurrent.models ?? {};
-    for (const [cat, modelList] of Object.entries(agentModels)) {
-      const list = Array.isArray(modelList) ? modelList : [modelList];
-      const idx = list.indexOf(key);
-      if (idx >= 0) {
-        wasInAgentBifrost = true;
-        list.splice(idx, 1);
-        agentModels![cat] = list.length === 1 ? list[0] : list;
-        removedFromAgentCategories.push(cat);
-      }
-    }
-
-    // Remove from discovery.managed in agent config
-    if (agentCurrent.discovery?.managed?.[key]) {
-      wasInAgentBifrost = true;
-      delete agentCurrent.discovery.managed[key];
-    }
-
-    if (wasInAgentBifrost) {
-      writeFileSync(agentBifrostPath, JSON.stringify(agentCurrent, null, 2));
-      log(ctx, `Removed "${key}" from agent-level bifrost.json categories: ${removedFromAgentCategories.join(", ") ?? "(none)"}`);
-    }
-  }
-
   // Write and reload config
   writeAndReloadConfig(current, state);
   log(ctx, `Updated bifrost.json: removed "${key}" from categories: ${removedFromCategories.join(", ") ?? "(none)"}`);
-  if (removedFromAgentCategories.length > 0) {
-    log(ctx, `Also removed "${key}" from agent-level bifrost.json: ${removedFromAgentCategories.join(", ") ?? "(none)"}`);
-  }
 
   // Run registry refresh
   uiBusy(ctx, "Refreshing registry...");
@@ -1287,7 +1167,6 @@ export const BIFROST_COMMAND_OPTIONS: readonly CommandSpec[] = [
   { value: "init", description: "Generate config (optional --scoped, --free, or --force)" },
   { value: "update", description: "Reconcile discovery-managed models", argumentHint: "--scoped [--free] [--force]" },
   { value: "refresh", description: "Add new scoped models without recategorizing existing", argumentHint: "[--free] [--force]" },
-  { value: "sync", description: "Sync live bifrost.json to pi-profile repo", argumentHint: "[--dry-run]" },
   { value: "benchmark", description: "Classify a benchmark prompt", argumentHint: "<prompt>" },
   { value: "cache stats", description: "Show classification cache" },
   { value: "cache clear", description: "Clear classification cache" },
@@ -1542,12 +1421,6 @@ export function createCommandRouter(
       description: "Add new scoped models without recategorizing existing",
       match: (sub) => sub === "refresh" || sub.startsWith("refresh "),
       handler: (args, ctx) => handleRefresh(args, ctx, state),
-    },
-    {
-      value: "sync",
-      description: "Sync live bifrost.json to pi-profile repo",
-      match: (sub) => sub === "sync" || sub.startsWith("sync "),
-      handler: (args, ctx) => handleSync(args, ctx, state),
     },
 
     // Benchmark

@@ -101,8 +101,14 @@ describe("cache", () => {
   });
 
   describe("cachePath", () => {
-    it("defaults to .pi/bifrost-cache.jsonl under cwd", () => {
-      assert.equal(cachePath("/project"), join("/project", ".pi", "bifrost-cache.jsonl"));
+    it("defaults to bifrost-cache.jsonl under the agent dir", () => {
+      const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+      process.env.PI_CODING_AGENT_DIR = "/home/user/.pi/agent";
+      try {
+        assert.equal(cachePath("/project"), join("/home/user/.pi/agent", "bifrost-cache.jsonl"));
+      } finally {
+        process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      }
     });
 
     it("expands leading tilde", () => {
@@ -115,8 +121,14 @@ describe("cache", () => {
       }
     });
 
-    it("joins relative path to cwd", () => {
-      assert.equal(cachePath("/project", "cache.jsonl"), join("/project", "cache.jsonl"));
+    it("joins relative path to the agent dir", () => {
+      const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+      process.env.PI_CODING_AGENT_DIR = "/home/user/.pi/agent";
+      try {
+        assert.equal(cachePath("/project", "cache.jsonl"), join("/home/user/.pi/agent", "cache.jsonl"));
+      } finally {
+        process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      }
     });
   });
 

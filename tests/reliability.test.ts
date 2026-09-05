@@ -90,6 +90,8 @@ describe("reliability", () => {
 
   it("saves and loads persisted state", () => {
     const cwd = mkdtempSync(join(tmpdir(), "bifrost-reliability-"));
+    const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = cwd;
     try {
       const path = reliabilityPath(cwd);
       const t0 = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -102,38 +104,47 @@ describe("reliability", () => {
       assert.equal(loaded.models["openai/gpt-5.4"]?.lastFailureSource, "probe");
       assert.equal(loaded.models["openai/gpt-5.4"]?.lastFailureReason, "timeout");
     } finally {
+      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
   it("returns empty state for missing persisted file", () => {
     const cwd = mkdtempSync(join(tmpdir(), "bifrost-reliability-"));
+    const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = cwd;
     try {
       const path = reliabilityPath(cwd);
       assert.deepEqual(loadReliability(path), emptyReliabilityState());
     } finally {
+      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
   it("returns empty state for corrupt persisted file", () => {
     const cwd = mkdtempSync(join(tmpdir(), "bifrost-reliability-"));
+    const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = cwd;
     try {
       const path = reliabilityPath(cwd);
-      mkdirSync(join(cwd, ".pi"), { recursive: true });
-      writeFileSync(join(cwd, ".pi", "bifrost-reliability.json"), "{not json", "utf8");
+      mkdirSync(cwd, { recursive: true });
+      writeFileSync(join(cwd, "bifrost-reliability.json"), "{not json", "utf8");
       const loaded = loadReliability(path);
       assert.deepEqual(loaded, emptyReliabilityState());
     } finally {
+      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
   it("fails open with malformed-but-valid JSON records", () => {
     const cwd = mkdtempSync(join(tmpdir(), "bifrost-reliability-"));
+    const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = cwd;
     try {
       const path = reliabilityPath(cwd);
-      mkdirSync(join(cwd, ".pi"), { recursive: true });
+      mkdirSync(cwd, { recursive: true });
       const malformed = JSON.stringify({
         version: 1,
         models: {
@@ -143,7 +154,7 @@ describe("reliability", () => {
           "": { openUntil: Infinity },
         },
       });
-      writeFileSync(join(cwd, ".pi", "bifrost-reliability.json"), malformed, "utf8");
+      writeFileSync(join(cwd, "bifrost-reliability.json"), malformed, "utf8");
       const loaded = loadReliability(path);
       assert.equal(loaded.version, 1);
       assert.equal(typeof loaded.models, "object");
@@ -156,6 +167,7 @@ describe("reliability", () => {
       assert.equal(circuit.open, false);
       assert.equal(circuit.recentFailures, 0);
     } finally {
+      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });
