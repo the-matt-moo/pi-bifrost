@@ -567,6 +567,11 @@ export function resolveModelWithFallback(
     requestedCandidates?: readonly Model<Api>[];
     defaultCandidates?: readonly Model<Api>[];
     now?: number;
+    /** When true, never fall back to `defaultTier` if the requested tier has
+     *  no healthy candidate. Used for strict categories (e.g. `coding`)
+     *  where falling back would silently select an unapproved cross-category
+     *  model instead of surfacing the unavailable/unhealthy result. */
+    strict?: boolean;
   },
 ): RoutedModelResolution {
   const now = options.now ?? Date.now();
@@ -597,6 +602,17 @@ export function resolveModelWithFallback(
   let fallbackReason: RoutedModelResolution["fallbackReason"] = requestedUnavailable
     ? "requested_tier_unavailable"
     : (primary.skipped.length > 0 ? "requested_tier_unhealthy" : undefined);
+
+  if (options.strict) {
+    return {
+      requestedTier: options.requestedTier,
+      selected: undefined,
+      strategy: options.requestedStrategy,
+      skipped: primary.skipped,
+      fallbackReason,
+      primary,
+    };
+  }
 
   // Compute final reason after evaluating fallback
   const resolveFinalReason = (fb: HealthyModelResolution): RoutedModelResolution["fallbackReason"] => {

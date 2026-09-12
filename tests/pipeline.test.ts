@@ -1,7 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { autoPinSource, createPipeline, type PipelineDeps } from "../classification-pipeline.ts";
+import type { SessionRoutingContext } from "../session-context.ts";
 import { makeClassifierModel } from "./helpers.ts";
+
+/** A session-momentum stub that always suggests `tier`, independent of
+ *  SessionRoutingContext's fuzzy topic-change heuristics (covered by
+ *  session-context.test.ts). Keeps conflict-resolution tests deterministic. */
+function fakeSessionContext(tier: string | undefined): SessionRoutingContext {
+  return { suggest: () => tier } as unknown as SessionRoutingContext;
+}
 
 function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
   return {
@@ -341,6 +349,90 @@ describe("classification-pipeline", () => {
       assert.equal(r.kind, "fallback");
       if (r.kind === "fallback") {
         assert.equal(r.tier, "economical");
+      }
+    });
+  });
+
+  describe("configured regex intent vs stale cache/session/complexity", () => {
+    it("a same-turn coding regex match beats a stale cached general tier", async () => {
+      const p = createPipeline(deps({
+        cacheLookup: () => "general",
+        regexRules: [{ pattern: "\\bimplement\\b", model: "coding" }],
+        tiers: ["general", "coding"],
+      }));
+      const r = await p.classify("implement the login endpoint");
+      assert.equal(r.kind, "classified");
+      if (r.kind === "classified") {
+        assert.equal(r.tier, "coding");
+        assert.equal(r.source, "regex");
+      }
+    });
+
+    it("returns from cache when the cached tier already matches the regex intent", async () => {
+      const p = createPipeline(deps({
+        cacheLookup: () => "coding",
+        regexRules: [{ pattern: "\\bimplement\\b", model: "coding" }],
+        tiers: ["coding", "frontier"],
+      }));
+      const r = await p.classify("implement this");
+      assert.equal(r.kind, "classified");
+      if (r.kind === "classified") {
+        assert.equal(r.tier, "coding");
+        assert.equal(r.source, "cache");
+      }
+    });
+
+    it("a same-turn coding regex match beats stale session momentum from a planning turn", async () => {
+      const p = createPipeline(deps({
+        regexRules: [{ pattern: "\\bimplement\\b", model: "coding" }],
+        tiers: ["coding", "frontier"],
+        sessionContext: fakeSessionContext("frontier"),
+      }));
+      const r = await p.classify("implement the first task from the plan");
+      assert.equal(r.kind, "classified");
+      if (r.kind === "classified") {
+        assert.equal(r.tier, "coding");
+        assert.equal(r.source, "regex");
+      }
+    });
+
+    it("session momentum still applies when it agrees with the regex intent", async () => {
+      const p = createPipeline(deps({
+        regexRules: [{ pattern: "\\bimplement\\b", model: "coding" }],
+        tiers: ["coding", "frontier"],
+        sessionContext: fakeSessionContext("coding"),
+      }));
+      const r = await p.classify("implement this");
+      assert.equal(r.kind, "classified");
+      if (r.kind === "classified") {
+        assert.equal(r.tier, "coding");
+        assert.equal(r.source, "cache");
+      }
+    });
+
+    it("a matched coding rule keeps a short prompt off the quick complexity shortcut", async () => {
+      const p = createPipeline(deps({
+        regexRules: [{ pattern: "\\bfix bug\\b", model: "coding" }],
+        tiers: ["quick", "coding", "frontier"],
+      }));
+      const r = await p.classify("fix bug");
+      assert.equal(r.kind, "classified");
+      if (r.kind === "classified") {
+        assert.equal(r.tier, "coding");
+        assert.equal(r.source, "regex");
+      }
+    });
+
+    it("a matched coding rule keeps a multi-file prompt off the frontier complexity escalation", async () => {
+      const p = createPipeline(deps({
+        regexRules: [{ pattern: "\\bimplement\\b", model: "coding" }],
+        tiers: ["coding", "frontier"],
+      }));
+      const r = await p.classify("implement the fix across a.ts, b.ts, and c.ts");
+      assert.equal(r.kind, "classified");
+      if (r.kind === "classified") {
+        assert.equal(r.tier, "coding");
+        assert.equal(r.source, "regex");
       }
     });
   });

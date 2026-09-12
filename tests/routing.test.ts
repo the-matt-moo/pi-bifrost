@@ -301,6 +301,75 @@ describe("routing", () => {
     });
   });
 
+  describe("resolveModelWithFallback strict", () => {
+    it("does not fall back to defaultTier when the requested tier is strict and unavailable", () => {
+      const fallback = makeModel("openai", "gpt-4.1-mini", 1);
+      const ctx = makeCtx([fallback]);
+
+      const result = resolveModelWithFallback(ctx, {
+        requestedTier: "coding",
+        requestedPattern: ["anthropic/claude-opus"],
+        requestedStrategy: "first",
+        defaultTier: "general",
+        defaultPattern: ["openai/gpt-4.1-mini"],
+        defaultStrategy: "first",
+        strict: true,
+      });
+
+      assert.equal(result.selected, undefined);
+      assert.equal(result.selectedTier, undefined);
+      assert.equal(result.fallback, undefined);
+      assert.equal(result.fallbackReason, "requested_tier_unavailable");
+    });
+
+    it("does not fall back to defaultTier when the requested tier is strict and unhealthy", () => {
+      const broken = makeModel("anthropic", "claude-opus", 15);
+      const fallback = makeModel("openai", "gpt-4.1-mini", 1);
+      const ctx = makeCtx([broken, fallback]);
+      const cfg = { ...DEFAULT_RELIABILITY, failureThreshold: 3, windowMinutes: 5, cooldownMinutes: 60 };
+      const now = Date.UTC(2026, 0, 1, 12, 0, 0);
+      let state = emptyReliabilityState();
+      state = recordModelFailure(state, modelKey(broken), cfg, now, "probe", "timeout");
+      state = recordModelFailure(state, modelKey(broken), cfg, now + 60_000, "probe", "timeout");
+      state = recordModelFailure(state, modelKey(broken), cfg, now + 120_000, "probe", "timeout");
+
+      const result = resolveModelWithFallback(ctx, {
+        requestedTier: "coding",
+        requestedPattern: ["anthropic/claude-opus"],
+        requestedStrategy: "first",
+        defaultTier: "general",
+        defaultPattern: ["openai/gpt-4.1-mini"],
+        defaultStrategy: "first",
+        reliabilityState: state,
+        reliabilityConfig: cfg,
+        now: now + 120_000,
+        strict: true,
+      });
+
+      assert.equal(result.selected, undefined);
+      assert.equal(result.fallback, undefined);
+      assert.equal(result.fallbackReason, "requested_tier_unhealthy");
+    });
+
+    it("still falls back normally when strict is false", () => {
+      const fallback = makeModel("openai", "gpt-4.1-mini", 1);
+      const ctx = makeCtx([fallback]);
+
+      const result = resolveModelWithFallback(ctx, {
+        requestedTier: "coding",
+        requestedPattern: ["anthropic/claude-opus"],
+        requestedStrategy: "first",
+        defaultTier: "general",
+        defaultPattern: ["openai/gpt-4.1-mini"],
+        defaultStrategy: "first",
+        strict: false,
+      });
+
+      assert.equal(modelKey(result.selected), "openai/gpt-4.1-mini");
+      assert.equal(result.selectedTier, "general");
+    });
+  });
+
   it("reuses pre-resolved candidates without rescanning registry", () => {
     const candidate = makeModel("anthropic", "claude-sonnet", 3);
     const ctx = {

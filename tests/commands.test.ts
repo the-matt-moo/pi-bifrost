@@ -84,10 +84,46 @@ describe("commands helpers", () => {
 
   describe("DEFAULT_RULES", () => {
     it("routes only to known tiers", () => {
-      const known = new Set(["quick", "general", "writing", "frontier"]);
+      const known = new Set(["quick", "general", "writing", "coding", "frontier"]);
       for (const rule of DEFAULT_RULES) {
         assert(known.has(rule.model), `rule routes to unknown tier ${rule.model}`);
       }
+    });
+
+    it("routes ordinary development rules to coding, not general", () => {
+      const codingOnly = ["unit tests", "refactor this function", "implement the login endpoint",
+        "add error handling here", "add types to this function", "call the api for pricing",
+        "review this code", "fix bug in the parser"];
+      for (const text of codingOnly) {
+        const rule = DEFAULT_RULES.find((r) => new RegExp(r.pattern, "i").test(text));
+        assert(rule, `no rule matched "${text}"`);
+        assert.equal(rule?.model, "coding", `"${text}" routed to ${rule?.model}, expected coding`);
+      }
+    });
+
+    it("does not route generic 'create a <noun>' prose to coding", () => {
+      const prose = ["create a poem about autumn", "write a birthday message"];
+      for (const text of prose) {
+        const rule = DEFAULT_RULES.find((r) => new RegExp(r.pattern, "i").test(text));
+        assert.notEqual(rule?.model, "coding", `"${text}" incorrectly routed to coding`);
+      }
+    });
+
+    it("routes plan/decompose/orchestrate rules to frontier, not coding", () => {
+      const frontierOnly = ["create an implementation plan for this migration", "decompose this project into tasks"];
+      for (const text of frontierOnly) {
+        const rule = DEFAULT_RULES.find((r) => new RegExp(r.pattern, "i").test(text));
+        assert.equal(rule?.model, "frontier", `"${text}" routed to ${rule?.model}, expected frontier`);
+      }
+    });
+
+    it("routes mixed design+implement prompts to coding", () => {
+      const rule = DEFAULT_RULES.find((r) => new RegExp(r.pattern, "i").test("design and implement the payment flow"));
+      assert.equal(rule?.model, "coding");
+    });
+
+    it("has no default rule pointing at general", () => {
+      assert(!DEFAULT_RULES.some((r) => r.model === "general"));
     });
   });
 

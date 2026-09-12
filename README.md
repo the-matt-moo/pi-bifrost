@@ -5,8 +5,9 @@
 Native model routing for [Pi](https://pi.dev). Before generation starts, Bifrost switches Pi's active model based on prompt complexity, routing rules, or LLM classification.
 
 ```text
-"summarize this file"         → quick model
-"debug this race condition"   → frontier model
+"summarize this file"                  → quick model
+"implement the login endpoint"         → coding model
+"design the auth system architecture"  → frontier model
 ```
 
 ## Disclaimer
@@ -42,6 +43,9 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Classifier confidence | Tier-only LLM output | `classifier.confidenceThreshold` requires an explicit score and rejects missing/low-confidence picks so routing falls through to regex/default without retrying another classifier |
 | Self-correction | Static cache, no feedback | Demotion tracking on manual overrides; cache entries auto-escalate tier after 3 demotions |
 | Cold start | Empty cache → every prompt hits LLM | Cache warm-start seeds entries from regex rules on first use |
+| Category taxonomy | `quick`/`general`/`frontier` | Adds a dedicated `coding` category (implementation, debugging, refactoring, tests, code review, codebase investigation, typing/error handling, API integration); `general` is now a non-specialized catch-all with no development regex rules of its own |
+| Category strictness | All categories fall back to `default` when unhealthy/unavailable | `strictCategories` (default `["coding"]`) exposes the unavailable/unhealthy result instead of silently switching to an unapproved cross-category model; eligibility comes only from explicit `models.coding` patterns, never `guessTier`/cost/context discovery |
+| Routing intent conflicts | Stale cache/session tier and complexity heuristics could override a same-turn regex match | A configured-category regex match in the current turn beats a conflicting stale cache/session tier and skips the complexity shortcut entirely |
 
 ### How the Improved Routing Pipeline Works
 
@@ -72,7 +76,7 @@ Bifrost: <tier> → <model> (<source>; N skipped)
 ```
 
 - `Bifrost` renders in a rainbow gradient.
-- `<tier>` is colored by tier: quick (green), general (cyan), writing (blue), frontier (orange).
+- `<tier>` is colored by tier: quick (green), general (cyan), writing (blue), coding (magenta), frontier (orange).
 - `→` is white.
 - `<model>` (provider/name, e.g. `openrouter/tencent/hy3`) is violet.
 - the trailing `(source; N skipped)` note is grey.
@@ -205,6 +209,7 @@ When you run `/bifrost init`, models are probed, fetched, and categorized automa
   - Everything else → `general`
   - *Subscription models* (Anthropic, Codex, Antigravity) use context-window heuristics instead of cost: ≥200k tokens = `frontier`, ≥64k = `general`, otherwise `quick`.
   - `writing` is a routing-only tier (explain/docs/summarize tasks). It has no `guessTier` cost class; when unconfigured it uses `general`-tier candidates at runtime.
+  - `coding` is also routing-only — `guessTier` never assigns it. `/bifrost init` never auto-populates `coding`; add `models.coding` patterns yourself with models you've approved for implementation/debugging/review work. `coding` is strict by default (`strictCategories`): if its candidates are missing or unhealthy, routing surfaces that instead of silently falling back to `general`/`default`.
 - **Intra-Tier Ordering (`sortTierModels`)**: Non-free models are sorted ascending by their **probe latency** (fastest first). Free models are sorted by their **OpenRouter collection rank**.
 
 ### 2. Runtime Model Selection Strategies
@@ -225,6 +230,8 @@ For every prompt, Bifrost executes a staged evaluation:
 5. **Bounded LLM Classifier**: Tries the classifier model and its ordered fallbacks within a 10-second total budget by default. Failed models cool down for 60 seconds.
 6. **Tier Regex Rules**: The already-computed regex result is used when classification does not return a valid tier.
 7. **Default Tier**: If all else fails, Bifrost uses the configured default.
+
+A regex rule that matches a configured category in the current turn takes priority over a conflicting cached/session-momentum tier from an earlier turn, and skips the complexity heuristic entirely — so a short `coding`-rule match doesn't drop to `quick`, and a long one doesn't escalate to `frontier`, just because those signals would otherwise apply.
 
 Registry refreshes use stale-while-revalidate: existing models route the current prompt immediately while refresh runs in the background. An empty registry or explicit recovery still waits for fresh data. Quota telemetry also backs off after empty results and degrades to neutral routing.
 
@@ -292,9 +299,20 @@ Classifier latency controls are optional and backward-compatible:
     "cooldownSeconds": 60,
     "maxTokens": 8,
     "confidenceThreshold": 0.4,
-    "fallbackToRegex": true
+    "fallbackToRegex": true,
+    "categoryDescriptions": {
+      "coding": "implementation, debugging, refactoring, tests, code review"
+    }
   }
 }
+```
+
+`classifier.categoryDescriptions` overrides the built-in per-category description sent to the classifier LLM. Known categories (`quick`, `general`, `writing`, `coding`, `frontier`) already have a built-in description; custom categories fall back to a description generated from their regex rules.
+
+`strictCategories` (default `["coding"]` once `coding` is configured) marks categories whose model resolution must not silently fall back to another category:
+
+```json
+{ "strictCategories": ["coding"] }
 ```
 
 `fallbackToRegex: false` skips tier regex fallback after classifier failure or rejection; direct model-reference rules still short-circuit before classification.

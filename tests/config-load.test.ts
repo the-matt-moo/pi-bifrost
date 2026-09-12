@@ -29,6 +29,7 @@ describe("config load", () => {
         quick: "first",
         general: "first",
         writing: "first",
+        coding: "first",
         frontier: "first",
       });
       assert.deepEqual(config.models, {});
@@ -92,6 +93,7 @@ describe("config load", () => {
         quick: "cheapest",
         general: "cheapest",
         writing: "first",
+        coding: "first",
         frontier: "first",
       });
       assert.deepEqual(config.models, {

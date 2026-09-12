@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { loadRuntimeState, runtimeStatePath } from "./runtime-state.ts";
 import type { BifrostConfig } from "./config.ts";
 import type { ThinkingLevel } from "./thinking.ts";
-import { DEFAULT_RULES, loadConfig, readJson } from "./config.ts";
+import { DEFAULT_RULES, loadConfig, readJson, isStrictCategory } from "./config.ts";
 import type { CacheEntry } from "./cache.ts";
 import { cachePath, loadCache, DEFAULT_MAX_ENTRIES, DEFAULT_THRESHOLD } from "./cache.ts";
 import type { ClassificationPipeline } from "./classification-pipeline.ts";
@@ -128,6 +128,7 @@ const BIFROST_RAINBOW = ["255;0;0", "255;127;0", "255;255;0", "0;255;0", "65;105
 const TIER_COLORS: Record<string, string> = {
   quick: "\x1b[32m",        // green
   general: "\x1b[36m",      // cyan
+  coding: "\x1b[35m",       // magenta
   frontier: "\x1b[38;5;208m", // orange
 };
 
@@ -253,6 +254,7 @@ function resolveTierDisplay(
     defaultStrategy,
     reliabilityState: state.reliabilityStore.getState(),
     reliabilityConfig: state.config.reliability,
+    strict: isStrictCategory(state.config, tier),
   });
 
   const selectedKey = resolved.selected ? modelKey(resolved.selected) : undefined;
@@ -285,6 +287,7 @@ function resolveTierDisplay(
 const PROPOSAL_STRATEGIES: Record<string, RoutingStrategy> = {
   quick: "first",
   general: "first",
+  coding: "first",
   frontier: "first",
   economical: "cheapest",
 };

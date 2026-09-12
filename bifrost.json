@@ -9,6 +9,7 @@
     "quick": "subscription_balance",
     "general": "subscription_balance",
     "writing": "subscription_balance",
+    "coding": "subscription_balance",
     "frontier": "subscription_balance"
   },
 
@@ -42,6 +43,7 @@
     "quick": [],
     "general": [],
     "writing": [],
+    "coding": [],
     "frontier": []
   }
 }

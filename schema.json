@@ -64,7 +64,7 @@
     },
     "models": {
       "type": "object",
-      "description": "Model tiers. Each key is a tier name (e.g. 'quick', 'general', 'frontier'). Values are provider/model patterns \u2014 either a single string or an ordered array of candidate patterns.",
+      "description": "Model tiers. Each key is a tier name (e.g. 'quick', 'general', 'coding', 'frontier'). Values are provider/model patterns \u2014 either a single string or an ordered array of candidate patterns. 'coding' is strict by default (see strictCategories): it never falls back to another category when unhealthy/unavailable, so only put coding-capable models in it.",
       "default": {},
       "additionalProperties": {
         "oneOf": [
@@ -87,6 +87,10 @@
           "general": [
             "opencode-go/deepseek-v4-pro",
             "openai-codex/gpt-5.4-mini"
+          ],
+          "coding": [
+            "openai-codex/gpt-5.4-mini",
+            "opencode-go/glm-5.2"
           ],
           "frontier": [
             "openai-codex/gpt-5.6-sol",
@@ -126,6 +130,12 @@
     },
     "quotaRouting": {
       "$ref": "#/definitions/QuotaRoutingConfig"
+    },
+    "strictCategories": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Categories that must not fall back to another category (default/general) when their configured candidates are missing or unhealthy \u2014 the unavailable/unhealthy result is exposed instead of silently switching to an unapproved cross-category model. Defaults to ['coding'] when 'coding' is a configured category.",
+      "default": ["coding"]
     },
     "keys": {
       "type": "object",
@@ -384,6 +394,11 @@
           "maximum": 1,
           "description": "Minimum LLM-reported confidence (0-1) required to accept a classifier tier. Missing or lower confidence falls through to regex/default, keeping the current model stable and reducing model-switch cache misses.",
           "default": 0.4
+        },
+        "categoryDescriptions": {
+          "type": "object",
+          "description": "Per-category descriptions shown to the classifier LLM. Overrides the built-in description for known categories (quick/general/writing/coding/frontier) and the generated regex-keyword description for custom categories.",
+          "additionalProperties": { "type": "string" }
         },
         "systemPrompt": {
           "type": "string",

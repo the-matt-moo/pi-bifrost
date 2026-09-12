@@ -37,6 +37,10 @@ export interface ClassifierConfig {
    *  Lower-confidence classifications fall through to regex/fallback,
    *  keeping the current model stable and reducing model-switch cache misses. */
   confidenceThreshold?: number;
+  /** Per-category descriptions shown to the classifier LLM. Overrides the
+   *  built-in description for known categories and the generated
+   *  regex-keyword description for custom categories. */
+  categoryDescriptions?: Record<string, string>;
 }
 
 export interface ThinkingConfig {
@@ -73,6 +77,10 @@ export interface BifrostConfig {
   discovery?: DiscoveryConfig;
   quotaRouting?: QuotaRoutingConfig;
   thinking?: ThinkingConfig;
+  /** Categories that must not silently fall back to `default`/another
+   *  category when their configured candidates are missing or unhealthy.
+   *  Defaults to `["coding"]` when `coding` is a configured category. */
+  strictCategories?: string[];
 }
 
 export const DEFAULT_RULES: RouteRule[] = [
@@ -114,17 +122,22 @@ export const DEFAULT_RULES: RouteRule[] = [
   {
     pattern:
       "(^|\\s)\\/?test(?:\\s|$)|\\b(unit tests?|integration tests?|e2e tests?|test cases?|write tests?|generate tests?|test coverage|test fixtures?)\\b",
-    model: "general",
+    model: "coding",
   },
   {
     pattern:
       "\\b(refactor|restructure|reorganize|clean up|simplify this|extract method|extract function|extract component|move this|rename this)\\b",
-    model: "general",
+    model: "coding",
   },
   {
     pattern:
-      "\\b(implement|add feature|create a|build a|write a|set up|scaffold|boilerplate|skeleton|stub)\\b",
-    model: "general",
+      "\\b(implement|add feature|scaffold|boilerplate|skeleton|stub)\\b|\\b(create|build|write|set up)\\s+(?:an?|the)?\\s*(?:[\\w-]+\\s+){0,3}(function|method|component|module|class|api|endpoint|feature|script|cli|service|library|package|hook|middleware|migration|schema|test|tests|app|application|plugin|extension|utility|helper)\\b",
+    model: "coding",
+  },
+  {
+    pattern:
+      "\\b(design and implement|design & implement|design and build|architect and implement|plan and implement|design then implement|spec and implement|design & build)\\b",
+    model: "coding",
   },
   {
     pattern:
@@ -139,26 +152,36 @@ export const DEFAULT_RULES: RouteRule[] = [
   {
     pattern:
       "\\b(add error handling|add validation|add logging|add types?|add interface|add typing|type this)\\b",
-    model: "general",
+    model: "coding",
   },
   {
     pattern:
       "\\b(api integration|connect to|call the api|http request|fetch from|rest endpoint|graphql query)\\b",
-    model: "general",
+    model: "coding",
   },
   {
     pattern:
-      "(^|\\s)\\/?review(?:\\s|$)|\\b(review this code|review this diff|review this pull request|review this pr|code review|audit this code|security review of this code)\\b",
-    model: "frontier",
+      "\\b(investigate the codebase|explore the codebase|trace this code|trace through the code|find where this is (?:defined|used|called)|locate the (?:function|bug|issue)|validate this (?:code|implementation|fix)|verify this (?:code|implementation|fix)|check this implementation|codebase investigation)\\b",
+    model: "coding",
+  },
+  {
+    pattern:
+      "(^|\\s)\\/?review(?:\\s|$)|\\b(review this code|review this diff|review this pull request|review this pr|code review)\\b",
+    model: "coding",
   },
   {
     pattern:
       "(^|\\s)\\/?debug(?:\\s|$)|\\b(debug|diagnose|fix bug|stack trace|runtime error|compile error|build error|failing build|exception|crash|incorrect output|unexpected behaviou?r|flaky test)\\b",
-    model: "frontier",
+    model: "coding",
   },
   {
     pattern:
       "(^|\\s)\\/?arch(?:\\s|$)|\\b(system architecture|software architecture|architect this|architect a|distributed system design|microservices architecture|database architecture|database design|schema design|api design|migration architecture|scalability plan|capacity planning|repository-wide refactor|major refactor)\\b",
+    model: "frontier",
+  },
+  {
+    pattern:
+      "\\b(break (?:this|it) down into tasks|decompose this (?:project|feature|system)|create an implementation plan|plan the implementation|plan this feature|orchestrate (?:this|the|these)|delegate (?:this|these) tasks|task breakdown|work breakdown structure|sprint plan|project roadmap)\\b",
     model: "frontier",
   },
   {
@@ -168,7 +191,7 @@ export const DEFAULT_RULES: RouteRule[] = [
   },
   {
     pattern:
-      "\\b(security audit|threat model|vulnerability analysis|authentication flaw|authorization flaw|sql injection|cross-site scripting|\\bxss\\b|\\bcsrf\\b|remote code execution|privilege escalation)\\b",
+      "\\b(security audit|threat model|vulnerability analysis|authentication flaw|authorization flaw|sql injection|cross-site scripting|\\bxss\\b|\\bcsrf\\b|remote code execution|privilege escalation|audit this code|security review of this code)\\b",
     model: "frontier",
   },
   {
@@ -187,6 +210,20 @@ export const DEFAULT_RULES: RouteRule[] = [
     model: "quick",
   },
 ];
+
+/** Categories strict-by-default: unhealthy/unavailable candidates must not
+ *  silently fall back cross-category (e.g. coding falling back to general
+ *  and picking an unapproved model). */
+export const DEFAULT_STRICT_CATEGORIES: readonly string[] = ["coding"];
+
+/** True when `category` must not fall back to another category on
+ *  resolution failure. Strict behavior only activates for categories the
+ *  user has actually configured in `models` — an unconfigured `coding`
+ *  regex match keeps falling through to `default` like any other tier. */
+export function isStrictCategory(config: BifrostConfig, category: string): boolean {
+  if (!Object.keys(config.models ?? {}).includes(category)) return false;
+  return (config.strictCategories ?? DEFAULT_STRICT_CATEGORIES).includes(category);
+}
 
 export const ALL_STRATEGIES: readonly RoutingStrategy[] = [
   "first",
@@ -235,6 +272,17 @@ export function validateConfig(
         issues.push({
           severity: "error",
           message: `Category strategy for tier "${tier}" — tier not found in models [${modelKeys.join(", ")}].`,
+        });
+      }
+    }
+  }
+
+  if (config.strictCategories) {
+    for (const category of config.strictCategories) {
+      if (!modelKeys.includes(category)) {
+        issues.push({
+          severity: "warning",
+          message: `strictCategories entry "${category}" — category not found in models [${modelKeys.join(", ")}].`,
         });
       }
     }
@@ -422,6 +470,7 @@ export function loadConfig(
       quick: "first",
       general: "first",
       writing: "first",
+      coding: "first",
       frontier: "first",
     },
     models: {},
@@ -453,7 +502,27 @@ export function loadRules(_cwd: string, config: BifrostConfig): RouteRule[] {
   return config.rules?.length ? config.rules : DEFAULT_RULES;
 }
 
-export function generateTierDescriptions(rules: RouteRule[], tiers: readonly string[]): Record<string, string> {
+/**
+ * Built-in classifier prompt descriptions for known categories. Regex-
+ * keyword extraction alone (six-ish words scraped from patterns) is a weak
+ * signal; known categories get a real description instead. `classifier.
+ * categoryDescriptions` in config overrides these per-category.
+ */
+export const BUILTIN_CATEGORY_DESCRIPTIONS: Record<string, string> = {
+  quick: "trivial one-shot tasks: formatting, conversion, commit messages, translation, extraction",
+  general: "non-specialized catch-all for prompts that do not clearly fit another category",
+  writing: "explanations, documentation, summaries, and other prose",
+  coding:
+    "implementation, bug fixing/debugging, refactoring, tests, code review, codebase investigation, typing/error handling, API integration, and mixed design+implement work",
+  frontier:
+    "architecture/design-only work, planning, decomposition, orchestration, strategic tradeoffs, threat modeling/security analysis, production incidents, and formal or high-complexity reasoning",
+};
+
+export function generateTierDescriptions(
+  rules: RouteRule[],
+  tiers: readonly string[],
+  overrides?: Record<string, string>,
+): Record<string, string> {
   const keywords: Record<string, Set<string>> = {};
   for (const tier of tiers) keywords[tier] = new Set();
 
@@ -475,6 +544,16 @@ export function generateTierDescriptions(rules: RouteRule[], tiers: readonly str
 
   const descriptions: Record<string, string> = {};
   for (const tier of tiers) {
+    const override = overrides?.[tier];
+    if (override) {
+      descriptions[tier] = override;
+      continue;
+    }
+    const builtin = BUILTIN_CATEGORY_DESCRIPTIONS[tier];
+    if (builtin) {
+      descriptions[tier] = builtin;
+      continue;
+    }
     const words = [...keywords[tier]];
     if (words.length > 0) {
       descriptions[tier] = words.slice(0, 6).join(", ");

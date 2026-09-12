@@ -27,6 +27,7 @@ import {
   loadRules,
   validateConfig,
   generateTierDescriptions,
+  isStrictCategory,
   type BifrostConfig,
 } from "./config.js";
 import {
@@ -127,7 +128,7 @@ function buildPipeline(
     : [];
 
   const rules = loadRules(process.cwd(), config);
-  const tierDescriptions = generateTierDescriptions(rules, tiers);
+  const tierDescriptions = generateTierDescriptions(rules, tiers, config.classifier?.categoryDescriptions);
 
   return createPipeline({
     cacheLookup: (text) => {
@@ -601,6 +602,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       reliabilityConfig: state.config.reliability,
       quota: quotaStore.getSnapshot(),
       quotaConfig: state.config.quotaRouting,
+      strict: isStrictCategory(state.config, tier),
     });
     const next = resolved.selected;
     if (!next) {
@@ -875,6 +877,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         quota: quotaStore.getSnapshot(),
         quotaConfig: state.config.quotaRouting,
         requestedCandidates,
+        strict: isStrictCategory(state.config, tier),
       });
       let model = resolved.selected;
       let selectedTier = resolved.selectedTier ?? tier;

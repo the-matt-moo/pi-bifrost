@@ -2,6 +2,17 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.6.0 - 12-09-2026
+
+### Added
+- `coding` category: implementation, bug fixing/debugging, refactoring, tests, code review, codebase investigation/validation, typing/error handling, API integration, and mixed design+implement prompts now route to a dedicated `coding` tier instead of `general`/`frontier`. `frontier` keeps architecture/design-only work, planning/decomposition/orchestration, strategic tradeoffs, threat modeling/security analysis, production incidents, and formal/high-complexity reasoning. `general` is now a non-specialized catch-all with no default regex rules of its own.
+- `strictCategories` config (default `["coding"]` when `coding` is configured): a strict category's model resolution never silently falls back to `default`/another category when its candidates are missing or unhealthy. It surfaces the unavailable/unhealthy result instead of selecting an unapproved cross-category model. `coding` eligibility only comes from explicit `models.coding` patterns — never from `guessTier`, cost, or context-size discovery.
+- `classifier.categoryDescriptions` config overrides the classifier prompt's per-category description. Built-in descriptions for `quick`/`general`/`writing`/`coding`/`frontier` now feed the classifier prompt instead of relying only on six regex-derived words; config values override built-ins, and custom categories still fall back to the generated description.
+
+### Changed
+- Classification pipeline: a configured-category regex match in the current turn (e.g. a `coding` rule) now takes priority over a conflicting cached tier or session-momentum tier from an earlier turn, and skips the quick/frontier complexity shortcut entirely — so a short coding prompt does not drop to `quick` and a long coding prompt does not escalate to `frontier` just because a configured rule already matched.
+- Configurations without a `models.coding` key are unaffected: coding-flavored regex rules simply fall through to the configured/default tier as before, since strict behavior only activates once `coding` is an actual configured category.
+
 ## 4.5.22 - 05-09-2026
 
 ### Fixed

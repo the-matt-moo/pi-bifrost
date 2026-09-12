@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validateConfig, type BifrostConfig } from "../config.ts";
+import {
+  validateConfig,
+  isStrictCategory,
+  generateTierDescriptions,
+  BUILTIN_CATEGORY_DESCRIPTIONS,
+  type BifrostConfig,
+} from "../config.ts";
 import type { RoutingStrategy } from "../routing.ts";
 
 const baseConfig: BifrostConfig = {
@@ -153,5 +159,74 @@ describe("validateConfig", () => {
       rules: [{ pattern: "[invalid", model: "frontier" }],
     });
     assert.equal(issues.length, 3);
+  });
+
+  it("warns when strictCategories references a category not in models", () => {
+    const issues = validateConfig({
+      ...baseConfig,
+      strictCategories: ["coding"],
+    });
+    const warnings = issues.filter((i) => i.severity === "warning");
+    assert.equal(warnings.length, 1);
+    assert.ok(warnings[0].message.includes("strictCategories"));
+  });
+
+  it("does not warn when strictCategories references a configured category", () => {
+    const issues = validateConfig({
+      ...baseConfig,
+      strictCategories: ["frontier"],
+    });
+    assert.equal(issues.length, 0);
+  });
+});
+
+describe("isStrictCategory", () => {
+  it("defaults coding to strict only when coding is a configured category", () => {
+    const withCoding: BifrostConfig = { models: { coding: ["model-a"] } };
+    const withoutCoding: BifrostConfig = { models: { general: ["model-a"] } };
+    assert.equal(isStrictCategory(withCoding, "coding"), true);
+    assert.equal(isStrictCategory(withoutCoding, "coding"), false);
+  });
+
+  it("never treats an unconfigured category as strict, even if listed", () => {
+    const config: BifrostConfig = { models: { general: ["model-a"] }, strictCategories: ["coding"] };
+    assert.equal(isStrictCategory(config, "coding"), false);
+  });
+
+  it("honors an explicit strictCategories override, including opting coding out", () => {
+    const config: BifrostConfig = { models: { coding: ["model-a"] }, strictCategories: [] };
+    assert.equal(isStrictCategory(config, "coding"), false);
+  });
+
+  it("can mark a custom configured category as strict", () => {
+    const config: BifrostConfig = { models: { premium: ["model-a"] }, strictCategories: ["premium"] };
+    assert.equal(isStrictCategory(config, "premium"), true);
+  });
+});
+
+describe("generateTierDescriptions", () => {
+  it("uses built-in descriptions for known categories over generated keywords", () => {
+    const descriptions = generateTierDescriptions(
+      [{ pattern: "\\bdebug\\b", model: "coding" }],
+      ["coding"],
+    );
+    assert.equal(descriptions.coding, BUILTIN_CATEGORY_DESCRIPTIONS.coding);
+  });
+
+  it("lets config overrides win over built-ins", () => {
+    const descriptions = generateTierDescriptions(
+      [{ pattern: "\\bdebug\\b", model: "coding" }],
+      ["coding"],
+      { coding: "custom coding description" },
+    );
+    assert.equal(descriptions.coding, "custom coding description");
+  });
+
+  it("still generates keyword descriptions for custom categories", () => {
+    const descriptions = generateTierDescriptions(
+      [{ pattern: "\\b(frontend|css|react)\\b", model: "frontend" }],
+      ["frontend"],
+    );
+    assert.ok(descriptions.frontend?.includes("frontend"));
   });
 });

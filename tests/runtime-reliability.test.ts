@@ -29,8 +29,10 @@ describe("runtime reliability simulation", () => {
     };
     const frontierPattern = ["openai/gpt-5.4"];
     const economicalPattern = ["openai/gpt-4.1-mini"];
-    const path = reliabilityPath(cwd);
     const t0 = Date.UTC(2026, 0, 1, 12, 0, 0);
+    const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = cwd;
+    const path = reliabilityPath(cwd);
 
     try {
       let state = emptyReliabilityState();
@@ -90,6 +92,7 @@ describe("runtime reliability simulation", () => {
       assert.equal(modelKey(third.selected), "openai/gpt-5.4");
       assert.equal(third.fallbackReason, undefined);
     } finally {
+      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });

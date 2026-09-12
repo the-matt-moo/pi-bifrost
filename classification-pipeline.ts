@@ -99,13 +99,22 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
 
     if (tiers.length === 0) return { kind: "unclassified" };
 
+    // A configured-category regex match this turn takes priority over stale
+    // cache/session signals from an earlier turn — otherwise "implement the
+    // login endpoint" right after a planning-heavy session would inherit a
+    // stale frontier tier instead of routing to the matched category.
+    const regexTierMatch = regexResult && tiers.includes(regexResult) ? regexResult : undefined;
+
     // Stage 2: cache lookup
     const endCache = debugMeasure("pipeline", "cache");
     const cached = cacheLookup(text);
     endCache({ hit: !!cached });
     if (cached && tiers.includes(cached)) {
-      debug("pipeline", "result", { source: "cache", tier: cached });
-      return { kind: "classified", tier: cached, source: "cache" };
+      if (!regexTierMatch || cached === regexTierMatch) {
+        debug("pipeline", "result", { source: "cache", tier: cached });
+        return { kind: "classified", tier: cached, source: "cache" };
+      }
+      debug("pipeline", "cache.stale_conflict", { cached, regexTierMatch });
     }
 
     // Stage 2.5: session momentum — reuse recent tier if conversation continues
@@ -114,13 +123,20 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
       const sessionTier = sessionContext.suggest(text);
       endSession({ tier: sessionTier });
       if (sessionTier && tiers.includes(sessionTier)) {
-        debug("pipeline", "result", { source: "cache", tier: sessionTier, sessionMomentum: true });
-        return { kind: "classified", tier: sessionTier, source: "cache" };
+        if (!regexTierMatch || sessionTier === regexTierMatch) {
+          debug("pipeline", "result", { source: "cache", tier: sessionTier, sessionMomentum: true });
+          return { kind: "classified", tier: sessionTier, source: "cache" };
+        }
+        debug("pipeline", "session.stale_conflict", { sessionTier, regexTierMatch });
       }
     }
 
-    // Stage 2.75: complexity heuristic — short-circuit for obvious cases
-    if (complexityEnabled !== false) {
+    // Stage 2.75: complexity heuristic — short-circuit for obvious cases.
+    // Skipped once a configured category rule already matched this turn, so
+    // quick/frontier complexity shortcuts never override explicit routing
+    // intent (e.g. a short "fix bug" coding-rule match should not drop to
+    // quick, and a long coding-rule match should not escalate to frontier).
+    if (complexityEnabled !== false && !regexTierMatch) {
       const endComplexity = debugMeasure("pipeline", "complexity");
       const verdict = assessComplexity(text, tiers);
       endComplexity({ verdict });
@@ -183,9 +199,9 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
     }
 
     // Stage 4: regex tier match — reuse the single regexResult (classifier already had priority).
-    if (fallbackToRegex && regexResult && tiers.includes(regexResult)) {
-      debug("pipeline", "result", { source: "regex", tier: regexResult });
-      return { kind: "classified", tier: regexResult, source: "regex" };
+    if (fallbackToRegex && regexTierMatch) {
+      debug("pipeline", "result", { source: "regex", tier: regexTierMatch });
+      return { kind: "classified", tier: regexTierMatch, source: "regex" };
     }
 
     // Stage 5: default fallback
