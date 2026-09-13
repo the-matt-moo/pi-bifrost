@@ -81,6 +81,12 @@ export interface BifrostConfig {
    *  category when their configured candidates are missing or unhealthy.
    *  Defaults to `["coding"]` when `coding` is a configured category. */
   strictCategories?: string[];
+  /** Redirect OpenRouter model-ID prefixes to subscription providers.
+   *  When a model is selected via OpenRouter whose ID starts with a key
+   *  in this map, Bifrost auto-switches to the mapped subscription
+   *  provider instead, avoiding paid-credit charges for models already
+   *  covered by a subscription. Example: `{"openai/": "openai-codex"}`. */
+  subscriptionGuard?: Record<string, string>;
 }
 
 export const DEFAULT_RULES: RouteRule[] = [

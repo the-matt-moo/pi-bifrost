@@ -668,6 +668,27 @@ export function getStrategy(
   return categoryStrategies?.[category] ?? fallbackStrategy ?? "first";
 }
 
+/**
+ * Check whether an OpenRouter-resolved model should be redirected to a
+ * subscription provider. Returns the subscription `provider/modelId`
+ * string if a guard matches, or `undefined` if no redirect applies.
+ */
+export function applySubscriptionGuard(
+  model: Model<Api>,
+  guard: Record<string, string> | undefined,
+): string | undefined {
+  if (!guard || model.provider !== "openrouter") return undefined;
+  for (const [prefix, subscriptionProvider] of Object.entries(guard)) {
+    if (model.id.startsWith(prefix)) {
+      // Strip the matched prefix (e.g. "openai/") to get the bare model id,
+      // then qualify it with the subscription provider.
+      const bareId = model.id.slice(prefix.length);
+      return `${subscriptionProvider}/${bareId}`;
+    }
+  }
+  return undefined;
+}
+
 export function classify(text: string, rules: readonly RouteRule[]): string | undefined {
   for (const rule of rules) {
     try {

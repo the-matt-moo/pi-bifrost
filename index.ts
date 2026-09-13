@@ -33,7 +33,9 @@ import {
 import {
   billingClass,
   diagnoseCandidates,
+  applySubscriptionGuard,
   findCandidates,
+  findOneModel,
   getStrategy,
   guessTier,
   isProviderQuotaExhausted,
@@ -672,6 +674,41 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }
     if (!state.enabled) return;
 
+    // Subscription guard: redirect OpenRouter models that are available
+    // via a subscription provider (e.g. openai/gpt-5.6-sol → openai-codex).
+    // Skip the redirect when the subscription provider's quota is exhausted
+    // and let the OpenRouter selection stand.
+    if (ctx.model && state.config.subscriptionGuard) {
+      const redirect = applySubscriptionGuard(ctx.model, state.config.subscriptionGuard);
+      if (redirect) {
+        const target = findOneModel(ctx, redirect);
+        if (target) {
+          const now = Date.now();
+          const quota = quotaStore.getSnapshot();
+          const weeklyExhausted = isProviderQuotaExhausted(target, quota, state.config.quotaRouting, now);
+          const sessionRemaining = quota?.byProvider[target.provider]?.sessionRemainingFraction;
+          const sessionExhausted = typeof sessionRemaining === "number" && sessionRemaining <= 0;
+          if (weeklyExhausted || sessionExhausted) {
+            debug("bifrost", "subscription_guard_skipped", {
+              from: selectedModel, to: redirect,
+              reason: weeklyExhausted ? "weekly_exhausted" : "session_exhausted",
+            });
+            // Let the OpenRouter model stand — don't redirect.
+          } else {
+            selfSelecting = true;
+            let switched = false;
+            try { switched = await pi.setModel(target); } catch { /* logged below */ }
+            if (switched) {
+              log(ctx, `Bifrost: redirected ${selectedModel} \u2192 ${modelKey(target)} (subscription guard)`);
+              return;
+            }
+            selfSelecting = false;
+            debug("bifrost", "subscription_guard_failed", { from: selectedModel, to: redirect });
+          }
+        }
+      }
+    }
+
     if (lastRoutedPrompt) {
       const tiers = Object.keys(state.config.models ?? {});
       const escalated = demoteCacheEntry(state.cacheEntries, lastRoutedPrompt, tiers);
@@ -685,7 +722,18 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
     sessionContext.reset();
     state.pinned = true;
+    // Determine which category (quick, general, writing, frontier, coding) the selected model belongs to
     state.modelCategory = undefined;
+    if (ctx.model && state.config.models) {
+      const selectedKey = modelKey(ctx.model);
+      for (const [category, models] of Object.entries(state.config.models)) {
+        const modelKeys = Array.isArray(models) ? models : [models];
+        if (modelKeys.some(m => m === selectedKey)) {
+          state.modelCategory = category;
+          break;
+        }
+      }
+    }
     state.saveModeState();
     debug("bifrost", "model_select", { model: selectedModel });
     syncBifrostModeStatus(ctx, state);
