@@ -63,6 +63,15 @@ describe("validateConfig", () => {
     assert.ok(warnings[0].message.includes('Unknown strategy'));
   });
 
+  it("accepts subscription_preferred strategy without warning", () => {
+    const issues = validateConfig({
+      ...baseConfig,
+      strategy: "subscription_preferred",
+    });
+    const warnings = issues.filter((i) => i.severity === "warning");
+    assert.equal(warnings.length, 0);
+  });
+
   it("errors on invalid cache threshold", () => {
     const issues = validateConfig({
       ...baseConfig,

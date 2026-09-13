@@ -2,6 +2,16 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.7.0 - 13-09-2026
+
+### Added
+- `subscriptionGuard` config: redirects OpenRouter model IDs matching configured prefixes (e.g. `{"openai/": "openai-codex"}`) to subscription providers when available, avoiding paid-credit consumption for models covered under subscription allowances. If the subscription provider's weekly or session quota is exhausted, the redirection is skipped and the OpenRouter model stands.
+- Model category reporting in `statusline.json`: `model_select` events now resolve and store `modelCategory` in Bifrost state and statusline metadata, enabling statusline consumers like Pi Atelier to display the active tier color and label.
+
+### Fixed
+- `resolveHealthyModel` subscription strategy guard: when `subscription_balance` or `subscription_preferred` strategy is active and session-reserve filters drop all subscription models, the subscription models are re-injected so the strategy's quota weighting deprioritizes drained models instead of hard-failing over to paid credits like OpenRouter.
+- Added `subscription_preferred` to `ALL_STRATEGIES` and `schema.json` to prevent spurious configuration validation warnings.
+
 ## 4.6.0 - 12-09-2026
 
 ### Added

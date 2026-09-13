@@ -46,6 +46,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Category taxonomy | `quick`/`general`/`frontier` | Adds a dedicated `coding` category (implementation, debugging, refactoring, tests, code review, codebase investigation, typing/error handling, API integration); `general` is now a non-specialized catch-all with no development regex rules of its own |
 | Category strictness | All categories fall back to `default` when unhealthy/unavailable | `strictCategories` (default `["coding"]`) exposes the unavailable/unhealthy result instead of silently switching to an unapproved cross-category model; eligibility comes only from explicit `models.coding` patterns, never `guessTier`/cost/context discovery |
 | Routing intent conflicts | Stale cache/session tier and complexity heuristics could override a same-turn regex match | A configured-category regex match in the current turn beats a conflicting stale cache/session tier and skips the complexity shortcut entirely |
+| Subscription guard | Not available | Redirects OpenRouter model IDs by prefix (e.g. `{"openai/": "openai-codex"}`) to subscription providers when available and within quota |
 
 ### How the Improved Routing Pipeline Works
 
@@ -314,6 +315,18 @@ Classifier latency controls are optional and backward-compatible:
 ```json
 { "strictCategories": ["coding"] }
 ```
+
+Redirect OpenRouter models to subscription providers to avoid paying credit fees for models covered by an active subscription:
+
+```json
+{
+  "subscriptionGuard": {
+    "openai/": "openai-codex"
+  }
+}
+```
+
+If the target subscription provider is exhausted (session or weekly quota), the redirect is skipped and OpenRouter selection stands.
 
 `fallbackToRegex: false` skips tier regex fallback after classifier failure or rejection; direct model-reference rules still short-circuit before classification.
 

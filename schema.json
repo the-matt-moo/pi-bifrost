@@ -35,9 +35,10 @@
         "largest_context",
         "random",
         "fastest",
-        "subscription_balance"
+        "subscription_balance",
+        "subscription_preferred"
       ],
-      "description": "Model selection strategy. 'first'/'fastest' picks first candidate (list should be pre-sorted). 'cheapest' sorts by input+output cost. 'cheapest_input' by input cost. 'cheapest_output' by output cost. 'largest_context' by context window. 'random' picks randomly. 'subscription_balance' weighs subscription-provider candidates by weekly usage remaining (see quotaRouting).",
+      "description": "Model selection strategy. 'first'/'fastest' picks first candidate (list should be pre-sorted). 'cheapest' sorts by input+output cost. 'cheapest_input' by input cost. 'cheapest_output' by output cost. 'largest_context' by context window. 'random' picks randomly. 'subscription_balance' weighs subscription-provider candidates by weekly usage remaining (see quotaRouting). 'subscription_preferred' prioritizes subscription models over free, unknown, and paid-credit models.",
       "default": "first"
     },
     "categoryStrategies": {
@@ -58,7 +59,8 @@
           "largest_context",
           "random",
           "fastest",
-          "subscription_balance"
+          "subscription_balance",
+          "subscription_preferred"
         ]
       }
     },
@@ -136,6 +138,13 @@
       "items": { "type": "string" },
       "description": "Categories that must not fall back to another category (default/general) when their configured candidates are missing or unhealthy \u2014 the unavailable/unhealthy result is exposed instead of silently switching to an unapproved cross-category model. Defaults to ['coding'] when 'coding' is a configured category.",
       "default": ["coding"]
+    },
+    "subscriptionGuard": {
+      "type": "object",
+      "description": "Redirect OpenRouter model-ID prefixes to subscription providers (e.g. {'openai/': 'openai-codex'}). When an OpenRouter model is selected whose ID begins with a configured prefix, Bifrost redirects to the subscription provider if healthy and within quota limits.",
+      "additionalProperties": {
+        "type": "string"
+      }
     },
     "keys": {
       "type": "object",

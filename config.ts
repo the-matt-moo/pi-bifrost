@@ -240,6 +240,7 @@ export const ALL_STRATEGIES: readonly RoutingStrategy[] = [
   "random",
   "fastest",
   "subscription_balance",
+  "subscription_preferred",
 ];
 
 export interface ConfigIssue {

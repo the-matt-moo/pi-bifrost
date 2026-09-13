@@ -5,6 +5,7 @@ import {
   billingClass,
   filterSessionExhausted,
   isProviderQuotaExhausted,
+  resolveHealthyModel,
   selectComparableAvailableModel,
   selectModel,
   selectWeighted,
@@ -398,5 +399,72 @@ describe("selectModel subscription_preferred", () => {
     const quota = snapshot(NOW, [["anthropic", 0.7]]);
     const got = selectModel([anthropic, or], "subscription_preferred", quota, FRESH, NOW);
     assert.equal(got?.provider, "anthropic");
+  });
+});
+
+describe("resolveHealthyModel guards subscription strategy", () => {
+  function ctx(models: ReturnType<typeof model>[]) {
+    return {
+      modelRegistry: {
+        find: (p: string, id: string) => models.find(m => m.provider === p && m.id === id),
+        getAvailable: () => models,
+      },
+      scopedModels: models.map(m => ({ model: m })),
+    } as any;
+  }
+
+  it("re-injects subscription models when session filter removes them under subscription_preferred", () => {
+    const codex = model("openai-codex", "gpt");
+    const or = model("openrouter", "deepseek");
+    // Codex session at 5% — below default 10% reserve, so filterSessionExhausted removes it.
+    // OpenRouter is paid-credit, always kept by the filter.
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.05]]);
+    const result = resolveHealthyModel(
+      ctx([codex, or]),
+      ["openai-codex/gpt", "openrouter/deepseek"],
+      "subscription_preferred",
+      undefined, undefined, NOW,
+      quota, { ...FRESH, sessionReservePercent: 0.10 },
+      undefined, "general",
+    );
+    // Without the guard, OpenRouter would win because codex is filtered out.
+    // With the guard, codex is re-injected and subscription_preferred picks it.
+    assert.equal(result.selected?.provider, "openai-codex",
+      "subscription_preferred should still select subscription model even when session-near-exhausted");
+  });
+
+  it("re-injects subscription models when session filter removes them under subscription_balance", () => {
+    const codex = model("openai-codex", "gpt");
+    const antigravity = model("antigravity", "gemini");
+    const or = model("openrouter", "deepseek");
+    // Both subscription providers near session exhaustion.
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.05], ["antigravity", 0.08]]);
+    const result = resolveHealthyModel(
+      ctx([codex, antigravity, or]),
+      ["openai-codex/gpt", "antigravity/gemini", "openrouter/deepseek"],
+      "subscription_balance",
+      undefined, undefined, NOW,
+      quota, { ...FRESH, sessionReservePercent: 0.10 },
+      undefined, "general",
+    );
+    assert.notEqual(result.selected?.provider, "openrouter",
+      "subscription_balance should not fall through to paid-credit when subscription models exist");
+  });
+
+  it("does not re-inject for non-subscription strategies", () => {
+    const codex = model("openai-codex", "gpt");
+    const or = model("openrouter", "deepseek");
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.05]]);
+    const result = resolveHealthyModel(
+      ctx([codex, or]),
+      ["openai-codex/gpt", "openrouter/deepseek"],
+      "first",
+      undefined, undefined, NOW,
+      quota, { ...FRESH, sessionReservePercent: 0.10 },
+      undefined, "general",
+    );
+    // With "first" strategy, session-exhausted codex should be filtered out normally.
+    assert.equal(result.selected?.provider, "openrouter",
+      "non-subscription strategies should respect session filtering without guard");
   });
 });

@@ -502,6 +502,37 @@ export interface RoutedModelResolution {
   fallback?: HealthyModelResolution;
 }
 
+/**
+ * When a subscription_* strategy is active, ensure at least one subscription
+ * model survives filtering.  The quota/session filters only remove subscription
+ * models (paid-credit passes unconditionally), so they can strip every
+ * subscription candidate while leaving OpenRouter — which defeats the strategy.
+ *
+ * If filtering removed all subscription models but the pre-filter set had some,
+ * re-inject the subscription models so the strategy can rank them properly.
+ * The strategy's own weighting (subscriptionWeights) already deprioritises
+ * drained providers, so keeping them in the candidate list is safe — it just
+ * prevents a hard cutover to paid-credit when the user explicitly asked for
+ * subscription-first routing.
+ */
+function guardSubscriptionStrategy(
+  filtered: Model<Api>[],
+  preFilter: Model<Api>[],
+  strategy: RoutingStrategy,
+): Model<Api>[] {
+  if (strategy !== "subscription_balance" && strategy !== "subscription_preferred") {
+    return filtered;
+  }
+  const hasSub = filtered.some((m) => billingClass(m) === "subscription");
+  if (hasSub) return filtered;
+
+  // All subscription models were removed by filters.  Re-inject them so the
+  // strategy can apply its own weighting instead of falling through to credits.
+  const subs = preFilter.filter((m) => billingClass(m) === "subscription");
+  if (subs.length === 0) return filtered;
+  return [...subs, ...filtered];
+}
+
 export function resolveHealthyModel(
   ctx: ExtensionContext,
   pattern: string | string[] | undefined,
@@ -518,8 +549,9 @@ export function resolveHealthyModel(
   if (!reliabilityState || reliabilityConfig?.enabled === false) {
     const quotaFiltered = filterQuotaExhausted(candidates, quota, quotaConfig, now);
     const sessionFiltered = filterSessionExhausted(quotaFiltered.candidates, quota, quotaConfig, now, tier);
+    const final = guardSubscriptionStrategy(sessionFiltered.candidates, candidates, strategy);
     return {
-      selected: selectModel(sessionFiltered.candidates, strategy, quota, quotaConfig, now),
+      selected: selectModel(final, strategy, quota, quotaConfig, now),
       candidates,
       healthyCandidates: candidates,
       skipped: [...quotaFiltered.skipped, ...sessionFiltered.skipped],
@@ -542,9 +574,10 @@ export function resolveHealthyModel(
   const quotaFiltered = filterQuotaExhausted(healthyCandidates, quota, quotaConfig, now);
   const sessionFiltered = filterSessionExhausted(quotaFiltered.candidates, quota, quotaConfig, now, tier);
   const allSkipped = [...skipped, ...quotaFiltered.skipped, ...sessionFiltered.skipped];
+  const final = guardSubscriptionStrategy(sessionFiltered.candidates, healthyCandidates, strategy);
 
   return {
-    selected: selectModel(sessionFiltered.candidates, strategy, quota, quotaConfig, now),
+    selected: selectModel(final, strategy, quota, quotaConfig, now),
     candidates,
     healthyCandidates,
     skipped: allSkipped,
