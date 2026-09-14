@@ -154,6 +154,87 @@ export function diagnoseCandidates(
   return { candidates, unresolved };
 }
 
+/**
+ * Shared logic for subscription_balance and subscription_preferred.
+ *
+ * Partition candidates by billing class.  Subscription models with
+ * sufficient session AND weekly quota remaining are tried first using
+ * weighted balancing.  Paid-credit (OpenRouter) models are only
+ * reached when every subscription candidate is genuinely drained or
+ * absent.  Free and unknown models are always eligible as final
+ * fallback.
+ */
+function selectSubscriptionFirst(
+  candidates: Model<Api>[],
+  quota: QuotaSnapshot | undefined,
+  quotaConfig: QuotaRoutingConfig | undefined,
+  now: number,
+): Model<Api> | undefined {
+  const subscriptionModels = candidates.filter((m) => billingClass(m) === "subscription");
+  const freeModels = candidates.filter((m) => billingClass(m) === "free");
+  const paidCreditModels = candidates.filter((m) => billingClass(m) === "paid-credit");
+  const otherModels = candidates.filter((m) => billingClass(m) === "unknown");
+
+  // Try subscription models first when any have usable quota.
+  if (subscriptionModels.length > 0) {
+    const viable = subscriptionModels.filter((m) =>
+      hasUsableQuota(m, quota, quotaConfig, now),
+    );
+    if (viable.length > 0) {
+      const preference = weeklyQuotaPreference(viable, quota, quotaConfig, now);
+      // ignoreWeeklyQuota means providers are within tolerance — pick via
+      // weighted random among *subscription-only* candidates, not the
+      // full list (the old bug: candidates[0] could be paid-credit).
+      return selectWeighted(
+        preference.candidates,
+        subscriptionWeights(preference.candidates, quota, quotaConfig, now),
+      );
+    }
+  }
+
+  // All subscriptions drained or absent — fall through.
+  if (freeModels.length > 0) return freeModels[0];
+  if (otherModels.length > 0) return otherModels[0];
+  // Last resort: paid-credit.
+  if (paidCreditModels.length > 0) return paidCreditModels[0];
+  return undefined;
+}
+
+/**
+ * Returns true when a subscription model has enough weekly quota to
+ * confidently handle a request.  When quota data is stale or missing
+ * the model is assumed usable (conservative: prefer attempting a
+ * subscription over prematurely falling to credits).
+ *
+ * Session quota is intentionally NOT checked here — it is already
+ * handled upstream by filterSessionExhausted + guardSubscriptionStrategy.
+ * Re-checking it here would defeat the guard's re-injection of
+ * near-drained subscription models that should still be preferred
+ * over paid-credit.
+ */
+function hasUsableQuota(
+  model: Model<Api>,
+  quota: QuotaSnapshot | undefined,
+  cfg: QuotaRoutingConfig | undefined,
+  now: number,
+): boolean {
+  if (!quota) return true;
+  const fresh = now - quota.fetchedAt < (cfg?.staleMinutes ?? 15) * 60_000;
+  if (!fresh) return true; // stale → assume usable, don't punish
+
+  const pq = quota.byProvider[model.provider];
+  if (!pq) return true; // no data → assume usable
+
+  const weeklyReserve = cfg?.reservePercent ?? 0.03;
+
+  // Weekly: if measured and below reserve, not usable
+  if (typeof pq.weeklyRemainingFraction === "number" && pq.weeklyRemainingFraction <= weeklyReserve) {
+    return false;
+  }
+
+  return true;
+}
+
 export function selectModel(
   candidates: Model<Api>[],
   strategy: RoutingStrategy,
@@ -174,40 +255,9 @@ export function selectModel(
       return [...candidates].sort((a, b) => modelContextSize(b) - modelContextSize(a))[0];
     case "random":
       return candidates[Math.floor(Math.random() * candidates.length)];
-    case "subscription_balance": {
-      const preference = weeklyQuotaPreference(candidates, quota, quotaConfig, now);
-      if (preference.ignoreWeeklyQuota) return preference.candidates[0];
-      return selectWeighted(
-        preference.candidates,
-        subscriptionWeights(preference.candidates, quota, quotaConfig, now),
-      );
-    }
-    case "subscription_preferred": {
-      // Prioritize subscription models, then balance their weekly allowances within 10%.
-      const subscriptionModels = candidates.filter((m) => billingClass(m) === "subscription");
-      const freeModels = candidates.filter((m) => billingClass(m) === "free");
-      const paidCreditModels = candidates.filter((m) => billingClass(m) === "paid-credit");
-      const otherModels = candidates.filter((m) => billingClass(m) === "unknown");
-
-      // If we have subscription models, use them with quota balancing
-      if (subscriptionModels.length > 0) {
-        const preference = weeklyQuotaPreference(subscriptionModels, quota, quotaConfig, now);
-        if (preference.ignoreWeeklyQuota) return preference.candidates[0];
-        return selectWeighted(
-          preference.candidates,
-          subscriptionWeights(preference.candidates, quota, quotaConfig, now),
-        );
-      }
-
-      // Fallback: free models, then others
-      if (freeModels.length > 0) {
-        return selectModel(freeModels, "first");
-      }
-      if (otherModels.length > 0) {
-        return selectModel(otherModels, "first");
-      }
-      return selectModel(paidCreditModels, "first");
-    }
+    case "subscription_balance":
+    case "subscription_preferred":
+      return selectSubscriptionFirst(candidates, quota, quotaConfig, now);
     default:
       // "first", "fastest" — list order is assumed meaningful.
       return candidates[0];
