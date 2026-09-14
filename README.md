@@ -27,7 +27,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Area | Original | This fork |
 |------|----------|-----------|
 | Model selection strategy | `first`, `cheapest`, `random`, `largest_context` | Adds `subscription_balance` (10% tolerance) and `subscription_preferred` (subscription > free > unknown > paid-credit); opted-in categories balance weekly allowances within 10% of each other |
-| Credit spend policy | All candidates equally eligible | Subscription providers (Codex, Antigravity, Anthropic) preferred; `subscription_balance` blocks paid OpenRouter until subscriptions drain past `reservePercent`; `subscription_preferred` prioritizes subscription models entirely, falling back to free/unknown/paid-credit only when no subscription models are available |
+| Credit spend policy | All candidates equally eligible | Both `subscription_balance` and `subscription_preferred` partition candidates by billing class: subscription models with usable weekly quota are always tried first via weighted random; paid-credit (OpenRouter) models are only reached when every subscription candidate is drained below `reservePercent` or absent |
 | Model discovery | Probes all Pi models | Adds `--scoped` (Pi enabled-models only, always included when requested regardless of discovery errors) and `--free` (top 5 OpenRouter free models by collection ranking, or top 5 fastest if ranking fetch fails) flags for `init` and `update`; `update --free` enforces the same cap |
 | Candidate scoping | Full registry | Classifier model lookup and tier inference filter candidates to Pi's scoped-model selection, preventing routing to models the user has not enabled |
 | Image prompts | Routed like text-only prompts | Prefers vision-capable models; if the selected tier cannot take images, Bifrost falls back to higher tiers with image support |
@@ -219,8 +219,7 @@ Once models are categorized, the configured `strategy` determines which model is
 - `cheapest` / `cheapest_input` / `cheapest_output` — strictly optimizes for token cost.
 - `largest_context` — favors models with the largest token window for massive context tasks.
 - `random` — randomly picks a candidate to load-balance or vary responses.
-- `subscription_preferred` — chooses subscription models first (Anthropic, Codex, Antigravity), quota-balances them with the same 10-point threshold, then falls back to free, unknown, and paid-credit models in that order.
-- `subscription_balance` — evaluates weekly quota telemetry for subscription providers (Anthropic, Codex, Antigravity). When providers differ by more than 10 percentage points of weekly allowance remaining, it favors the provider with more remaining quota; within 10 points, it retains normal list order. It suppresses paid OpenRouter credits while measured subscription allowance remains above `reservePercent`.
+- `subscription_preferred` / `subscription_balance` — both partition candidates by billing class. Subscription models (Anthropic, Codex, Antigravity) with usable weekly quota are tried first via weighted random (gamma-curved by remaining allowance). When providers differ by more than 10 percentage points, the higher-allowance provider is favored; within 10 points, weighted selection balances across all viable subscription models. Paid-credit (OpenRouter) models are only reached when every subscription candidate is drained below `reservePercent` or absent. Free and unknown models serve as intermediate fallback.
 
 ### 3. Dynamic Pipeline: Prompt Routing
 For every prompt, Bifrost executes a staged evaluation:

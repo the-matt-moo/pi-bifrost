@@ -312,16 +312,23 @@ describe("selectModel weekly quota preference", () => {
     assert.equal(selectModel([codex, antigravity], "first", quota, FRESH, NOW)?.provider, "openai-codex");
   });
 
-  it("uses the normal strategy when weekly allowances are within 10%", () => {
+  it("uses weighted selection among subscription models when weekly allowances are within 10%", () => {
+    const or = model("openrouter", "paid");
     const codex = model("openai-codex", "codex");
     const antigravity = model("antigravity", "gemini");
     const quota = snapshot(NOW, [["openai-codex", 0.6], ["antigravity", 0.65]]); // 5% gap
 
-    assert.equal(selectModel([codex, antigravity], "first", quota, FRESH, NOW)?.provider, "openai-codex");
+    // Even within tolerance, subscription_balance must still pick a subscription
+    // model — never the paid-credit OpenRouter model that leads the list.
     const balanced = withRandom(0.49, () =>
-      selectModel([codex, antigravity], "subscription_balance", quota, FRESH, NOW),
+      selectModel([or, codex, antigravity], "subscription_balance", quota, FRESH, NOW),
     );
-    assert.equal(balanced?.provider, "openai-codex");
+    assert.notEqual(balanced?.provider, "openrouter",
+      "subscription_balance should never select paid-credit when subscription models have quota");
+    assert.ok(
+      balanced?.provider === "openai-codex" || balanced?.provider === "antigravity",
+      "should pick one of the subscription providers",
+    );
   });
 });
 

@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.8.0 - 13-09-2026
+
+### Fixed
+- `selectModel` subscription-first enforcement: both `subscription_balance` and `subscription_preferred` now partition candidates by billing class before selection. Subscription models with usable weekly quota are always tried first via weighted random; paid-credit (OpenRouter) models are only reached when every subscription candidate is genuinely drained or absent. Previously, `subscription_balance` passed all candidates (including paid-credit) into `weeklyQuotaPreference`, and when providers were within 10% tolerance the `ignoreWeeklyQuota` path returned `candidates[0]` regardless of billing class — allowing an OpenRouter model at position 0 to win over subscription models with 80%+ remaining quota.
+
 ## 4.7.0 - 13-09-2026
 
 ### Added
