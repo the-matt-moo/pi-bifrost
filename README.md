@@ -48,6 +48,10 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Routing intent conflicts | Stale cache/session tier and complexity heuristics could override a same-turn regex match | A configured-category regex match in the current turn beats a conflicting stale cache/session tier and skips the complexity shortcut entirely |
 | Subscription guard | Not available | Redirects OpenRouter model IDs by prefix (e.g. `{"openai/": "openai-codex"}`) to subscription providers when available and within quota |
 
+### Subagent Integration
+
+Bifrost exposes an in-process `bifrost:rpc:v1` classification channel for subagent bridges. The `classifyTask` method returns the selected model and thinking level without changing the active Pi session model. This supports Claude Code-style subagent extensions such as `@tintinweb/pi-subagents` and `@gotgenes/pi-subagents`.
+
 ### How the Improved Routing Pipeline Works
 
 The original Bifrost pipeline was a 4-stage waterfall: try the cache, then ask an LLM classifier, then fall back to regex rules, then use the default tier. Each prompt was classified independently with no memory of recent context, no awareness of prompt complexity, and no feedback from routing outcomes.

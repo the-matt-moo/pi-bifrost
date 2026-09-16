@@ -61,6 +61,7 @@ import {
   classifierModelMissing,
 } from "./diagnostics.js";
 import { RuntimeReliabilityTracker } from "./runtime-reliability.js";
+import { handleRpcRequest } from "./rpc.js";
 import { assessThinking, clampToModel, compareThinkingLevels, ThinkingSession, type ThinkingDecision, type ThinkingLevel } from "./thinking.ts";
 import { SessionRoutingContext } from "./session-context.js";
 import {
@@ -213,6 +214,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   const sessionContext = new SessionRoutingContext();
   let lastRoutedPrompt: string | undefined;
   let pipeline: ClassificationPipeline | undefined;
+  let activeContext: ExtensionContext | undefined;
   let startupValidated = false;
   const warnedPatterns = new Set<string>();
   const classifierCooldowns = new Map<string, number>();
@@ -430,6 +432,50 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
   const handleCommand = createCommandRouter(state);
 
+  if (typeof pi.events?.on === "function" && typeof pi.events.emit === "function") {
+    pi.events.on("bifrost:rpc:v1:request", async (raw) => {
+      const result = await handleRpcRequest(raw, async (text) => {
+      if (!activeContext || !state.enabled) return null;
+
+      const classification = await getPipeline(activeContext).classify(text);
+      if (classification.kind !== "classified") return null;
+
+      const tier = classification.tier;
+      const pattern = inferPattern(activeContext, tier);
+      const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
+      const defaultTier = state.config.default;
+      const resolved = resolveModelWithFallback(activeContext, {
+        requestedTier: tier,
+        requestedPattern: pattern,
+        requestedStrategy: strategy,
+        defaultTier,
+        defaultPattern: defaultTier ? inferPattern(activeContext, defaultTier) : undefined,
+        defaultStrategy: defaultTier
+          ? getStrategy(state.config.categoryStrategies, state.config.strategy, defaultTier)
+          : strategy,
+        reliabilityState: state.reliabilityStore.getState(),
+        reliabilityConfig: state.config.reliability,
+        quota: quotaStore.getSnapshot(),
+        quotaConfig: state.config.quotaRouting,
+        requestedCandidates: diagnoseCandidates(activeContext, pattern).candidates,
+        strict: isStrictCategory(state.config, tier),
+      });
+      if (!resolved.selected) return null;
+
+      const selectedTier = resolved.selectedTier ?? tier;
+      const thinking = state.previewThinking?.(text, selectedTier, resolved.selected) ?? { level: "off" };
+      return {
+        model: modelKey(resolved.selected),
+        thinking: { level: thinking.level },
+      };
+      });
+
+      if (result.requestId && result.reply) {
+        pi.events.emit(`bifrost:rpc:v1:reply:${result.requestId}`, result.reply);
+      }
+    });
+  }
+
   pi.registerCommand("bifrost", {
     description: "Bifrost model router control",
     getArgumentCompletions: getBifrostCommandCompletions,
@@ -496,6 +542,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    activeContext = ctx;
     loadSessionRuntimeState(ctx.sessionManager?.getSessionId?.());
     state.thinkingLevel = pi.getThinkingLevel();
     lastSeenModel = modelKey(ctx.model);
@@ -745,6 +792,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   });
 
   pi.on("input", async (event, ctx) => {
+    activeContext = ctx;
     setBifrostSilent(ctx, state.silent);
     // Safety: clear any guard left unconsumed from the previous turn so it can't wedge.
     // The current turn's thinking_level_select has already been delivered by now.

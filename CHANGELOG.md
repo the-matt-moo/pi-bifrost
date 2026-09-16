@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.9.0 - 15-09-2026
+
+### Added
+- Added `bifrost:rpc:v1` classification RPC for subagent bridges, returning Bifrost-selected models and thinking levels without changing the active session model.
+
 ## 4.8.0 - 13-09-2026
 
 ### Fixed
