@@ -743,6 +743,18 @@ export function resolveModelWithFallback(
   };
 }
 
+/** Refresh a stale host registry once when a configured tier resolved no candidates. */
+export async function retryUnavailableResolution(
+  resolution: RoutedModelResolution,
+  refresh: () => Promise<boolean>,
+  resolve: () => RoutedModelResolution,
+): Promise<RoutedModelResolution> {
+  if (resolution.fallbackReason !== "requested_tier_unavailable" || !(await refresh())) {
+    return resolution;
+  }
+  return resolve();
+}
+
 export function getStrategy(
   categoryStrategies: Record<string, RoutingStrategy> | undefined,
   fallbackStrategy: RoutingStrategy | undefined,

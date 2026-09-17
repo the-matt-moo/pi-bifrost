@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   findOneModel,
   findCandidates,
@@ -7,6 +8,7 @@ import {
   resolveModel,
   resolveHealthyModel,
   resolveModelWithFallback,
+  retryUnavailableResolution,
   selectImageCapableModelFromGroups,
   supportsImageInput,
   modelKey,
@@ -349,6 +351,29 @@ describe("routing", () => {
       assert.equal(result.selected, undefined);
       assert.equal(result.fallback, undefined);
       assert.equal(result.fallbackReason, "requested_tier_unhealthy");
+    });
+
+    it("retries a strict unavailable tier after a registry refresh", async () => {
+      const models: Model<Api>[] = [];
+      const ctx = makeCtx(models);
+      const resolve = () => resolveModelWithFallback(ctx, {
+        requestedTier: "coding",
+        requestedPattern: ["anthropic/claude-opus"],
+        requestedStrategy: "first",
+        strict: true,
+      });
+      const initial = resolve();
+      let refreshes = 0;
+
+      const result = await retryUnavailableResolution(initial, async () => {
+        refreshes += 1;
+        models.push(makeModel("anthropic", "claude-opus", 15));
+        return true;
+      }, resolve);
+
+      assert.equal(refreshes, 1);
+      assert.equal(modelKey(result.selected), "anthropic/claude-opus");
+      assert.equal(result.fallbackReason, undefined);
     });
 
     it("still falls back normally when strict is false", () => {

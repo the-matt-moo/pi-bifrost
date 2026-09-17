@@ -42,6 +42,7 @@ import {
   modelKey,
   resolveModelWithFallback,
   resolveHealthyModel,
+  retryUnavailableResolution,
   selectComparableAvailableModel,
   selectImageCapableModelFromGroups,
   supportsImageInput,
@@ -952,7 +953,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         ? getStrategy(state.config.categoryStrategies, state.config.strategy, defaultTier)
         : strategy;
 
-      const { candidates: requestedCandidates, unresolved } = diagnoseCandidates(ctx, pattern);
+      let { candidates: requestedCandidates, unresolved } = diagnoseCandidates(ctx, pattern);
       for (const p of unresolved) {
         const warnKey = `${tier}:${p}`;
         if (!warnedPatterns.has(warnKey)) {
@@ -961,7 +962,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         }
       }
 
-      const resolved = resolveModelWithFallback(ctx, {
+      const resolveRoute = () => resolveModelWithFallback(ctx, {
         requestedTier: tier,
         requestedPattern: pattern,
         requestedStrategy: strategy,
@@ -975,6 +976,22 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         requestedCandidates,
         strict: isStrictCategory(state.config, tier),
       });
+      let resolved = resolveRoute();
+      if (resolved.fallbackReason === "requested_tier_unavailable") {
+        setBifrostWorkingMessage(ctx, "Bifrost checking models...");
+        try {
+          resolved = await retryUnavailableResolution(
+            resolved,
+            () => state.refreshRegistry(ctx),
+            () => {
+              requestedCandidates = diagnoseCandidates(ctx, pattern).candidates;
+              return resolveRoute();
+            },
+          );
+        } finally {
+          setBifrostWorkingMessage(ctx, undefined);
+        }
+      }
       let model = resolved.selected;
       let selectedTier = resolved.selectedTier ?? tier;
       let visionFallback = false;

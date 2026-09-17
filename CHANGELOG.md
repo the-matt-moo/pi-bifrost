@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.9.1 - 16-09-2026
+
+### Fixed
+- False `coding` "no healthy model" warning: strict-category routing now awaits a single registry refresh and re-resolves only when the tier was genuinely unavailable due to a stale host registry. True circuit/quota unavailability paths are unchanged.
+
 ## 4.9.0 - 15-09-2026
 
 ### Added
