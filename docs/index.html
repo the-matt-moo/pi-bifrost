@@ -257,9 +257,10 @@
           <div>
             <dt>Credentials</dt>
             <dd>
-              Registry models use credentials managed by Pi. A custom classifier
-              <code>endpoint</code> is treated as an unauthenticated
-              OpenAI-compatible endpoint.
+              Registry models and the OpenRouter Jev fallback use credentials
+              managed by Pi. Direct TypeSafe Jev reads its API key from the
+              configured Windows Credential Manager target. A custom classifier
+              <code>endpoint</code> remains unauthenticated.
             </dd>
           </div>
         </dl>
@@ -421,8 +422,10 @@
   ],
   "classifier": {
     "enabled": true,
-    "model": "opencode/deepseek-v4-flash-free",
-    "method": "auto"
+    "model": "typesafe/jev-latest",
+    "fallbackModels": ["openrouter/~typesafe/jev-latest"],
+    "jevCredentialTarget": "pi-bifrost/jev-api-key",
+    "method": "direct"
   },
   "reliability": {
     "enabled": true,

@@ -3,6 +3,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import { spawn } from "node:child_process";
 import { debug } from "./debug.ts";
 import { parseClassifierStderr, formatDiagnostic } from "./diagnostics.ts";
+import { readWindowsCredential } from "./windows-credential.ts";
 
 // ── Classifier model — union type, no type-cast lies ─────────
 
@@ -19,11 +20,21 @@ interface EndpointClassifier {
   readonly baseUrl: string;
 }
 
-/** Union: either a registry model or a raw endpoint. */
-export type ClassifierModel = RegistryClassifier | EndpointClassifier;
+export interface JevClassifier {
+  readonly kind: "jev";
+  readonly id: string;
+  readonly provider: "typesafe" | "openrouter";
+  readonly model: string;
+  readonly endpoint: string;
+  readonly credentialTarget?: string;
+}
+
+/** Union: registry, raw OpenAI-compatible endpoint, or native Jev decision model. */
+export type ClassifierModel = RegistryClassifier | EndpointClassifier | JevClassifier;
 
 function classifierBaseUrl(cm: ClassifierModel): string {
-  return cm.kind === "endpoint" ? cm.baseUrl : cm.model.baseUrl;
+  if (cm.kind === "registry") return cm.model.baseUrl;
+  return cm.kind === "jev" ? cm.endpoint : cm.baseUrl;
 }
 
 function classifierId(cm: ClassifierModel): string {
@@ -31,6 +42,7 @@ function classifierId(cm: ClassifierModel): string {
 }
 
 function isOpenAiCompatibleEndpoint(cm: ClassifierModel): boolean {
+  if (cm.kind === "jev") return false;
   if (cm.kind === "endpoint") return true; // endpoint config implies OpenAI-compatible
   const api = cm.model.api;
   return (
@@ -46,6 +58,38 @@ const DEFAULT_SYSTEM_PROMPT =
   "You are a routing classifier. Follow the requested output format exactly.";
 const DEFAULT_MAX_TOKENS = 8;
 const MAX_CLASSIFIER_PROMPT_CHARS = 8_000;
+export const DEFAULT_JEV_CREDENTIAL_TARGET = "pi-bifrost/jev-api-key";
+
+export function jevClassifierForReference(
+  reference: string,
+  credentialTarget = DEFAULT_JEV_CREDENTIAL_TARGET,
+): JevClassifier | undefined {
+  if (reference.startsWith("typesafe/jev-")) {
+    return {
+      kind: "jev",
+      id: reference,
+      provider: "typesafe",
+      model: reference.slice("typesafe/".length),
+      endpoint: "https://api.typesafe.ai/v1/systemone",
+      credentialTarget,
+    };
+  }
+  if (reference.startsWith("openrouter/~typesafe/jev-") ||
+      reference.startsWith("openrouter/typesafe/jev-")) {
+    return {
+      kind: "jev",
+      id: reference,
+      provider: "openrouter",
+      model: reference.slice("openrouter/".length),
+      endpoint: "https://openrouter.ai/api/alpha/decisions",
+    };
+  }
+  return undefined;
+}
+
+export function isJevModelReference(reference: string): boolean {
+  return jevClassifierForReference(reference) !== undefined;
+}
 
 export type ClassifierAttempt =
   | { readonly status: "accepted"; readonly tier: string }
@@ -63,6 +107,8 @@ export interface ClassifierOptions {
    *  a reject, so routing falls through to regex/fallback and the current
    *  model stays stable. 0 = accept any confidently-tagged tier. */
   confidenceThreshold?: number;
+  /** Internal seam for deterministic Credential Manager tests. */
+  credentialReader?: (target: string) => Promise<string | undefined>;
 }
 
 /** Parse `tier` or `tier <confidence>` without inventing missing confidence. */
@@ -90,6 +136,12 @@ export function categoryLabel(category: string): string {
   return category;
 }
 
+function boundedPrompt(userPrompt: string): string {
+  return userPrompt.length <= MAX_CLASSIFIER_PROMPT_CHARS
+    ? userPrompt
+    : `${userPrompt.slice(0, 4_000)}\n...[middle omitted]...\n${userPrompt.slice(-4_000)}`;
+}
+
 export function classificationPrompt(
   categories: readonly string[],
   userPrompt: string,
@@ -102,9 +154,7 @@ export function classificationPrompt(
         return desc ? `${categoryLabel(c)}: ${desc}` : categoryLabel(c);
       }).join("\n")
     : categories.map(categoryLabel).join(", ");
-  const request = userPrompt.length <= MAX_CLASSIFIER_PROMPT_CHARS
-    ? userPrompt
-    : `${userPrompt.slice(0, 4_000)}\n...[middle omitted]...\n${userPrompt.slice(-4_000)}`;
+  const request = boundedPrompt(userPrompt);
   const output = requireConfidence
     ? "<category> <confidence 0.0-1.0>"
     : "<category>";
@@ -151,6 +201,98 @@ interface DirectClassification {
   attempted: boolean;
 }
 
+export function jevRequest(
+  classifierModel: JevClassifier,
+  categories: readonly string[],
+  prompt: string,
+  tierDescriptions?: Record<string, string>,
+  systemPrompt?: string,
+): object {
+  return {
+    state: boundedPrompt(prompt),
+    model: classifierModel.model,
+    questions: {
+      category: {
+        type: "choice",
+        instructions: {
+          task: "Choose the single pi-bifrost routing category that best fits the request.",
+          priority: "Classify by the hardest and most consequential requested work.",
+          ...(systemPrompt ? { additional_policy: systemPrompt } : {}),
+        },
+        criteria: Object.fromEntries(
+          categories.map((category) => [category, tierDescriptions?.[category] ?? null]),
+        ),
+      },
+    },
+  };
+}
+
+async function classifyWithJev(
+  ctx: ExtensionContext,
+  classifierModel: JevClassifier,
+  categories: readonly string[],
+  prompt: string,
+  options: ClassifierOptions,
+): Promise<DirectClassification> {
+  try {
+    const providerAuth = classifierModel.provider === "openrouter"
+      ? await ctx.modelRegistry.getProviderAuth("openrouter")
+      : undefined;
+    const apiKey = classifierModel.provider === "typesafe"
+      ? await (options.credentialReader ?? readWindowsCredential)(
+        classifierModel.credentialTarget ?? DEFAULT_JEV_CREDENTIAL_TARGET,
+      )
+      : providerAuth?.auth.apiKey;
+    const authHeaders = providerAuth?.auth.headers ?? {};
+    if (!apiKey && !("Authorization" in authHeaders) && !("authorization" in authHeaders)) {
+      return { attempted: false, outcome: { status: "failed" } };
+    }
+
+    const headers: Record<string, string> = { "Content-Type": "application/json", ...authHeaders };
+    if (apiKey && !("Authorization" in headers) && !("authorization" in headers)) {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+    const response = await fetch(classifierModel.endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(jevRequest(
+        classifierModel,
+        categories,
+        prompt,
+        options.tierDescriptions,
+        options.systemPrompt,
+      )),
+      signal: options.signal ?? ctx.signal ?? AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) {
+      console.error(`[bifrost] classifier HTTP ${response.status} from ${classifierModel.endpoint}`);
+      return { attempted: true, outcome: { status: "failed" } };
+    }
+
+    const data = (await response.json()) as {
+      answers?: { category?: { choice?: string; confidence?: number } };
+    };
+    const answer = data.answers?.category;
+    if (!answer?.choice) return { attempted: true, outcome: { status: "failed" } };
+    const tier = extractCategory(answer.choice, categories);
+    const threshold = options.confidenceThreshold ?? 0;
+    const outcome: ClassifierAttempt = !tier ||
+        (threshold > 0 && (answer.confidence === undefined || answer.confidence < threshold))
+      ? { status: "rejected" }
+      : { status: "accepted", tier };
+    debug("classifier", "jev.done", {
+      model: classifierModel.id,
+      tier,
+      confidence: answer.confidence,
+      threshold,
+      status: outcome.status,
+    });
+    return { attempted: true, outcome };
+  } catch {
+    return { attempted: true, outcome: { status: "failed" } };
+  }
+}
+
 async function classifyWithDirectHttp(
   ctx: ExtensionContext,
   classifierModel: ClassifierModel,
@@ -163,6 +305,10 @@ async function classifyWithDirectHttp(
   const temperature = options.temperature ?? 0;
   const threshold = options.confidenceThreshold ?? 0;
   const userPrompt = classificationPrompt(categories, prompt, options.tierDescriptions, threshold > 0);
+
+  if (classifierModel.kind === "jev") {
+    return classifyWithJev(ctx, classifierModel, categories, prompt, options);
+  }
 
   if (classifierModel.kind === "registry") {
     try {

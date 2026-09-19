@@ -11,6 +11,7 @@ import type { CacheEntry } from "./cache.ts";
 import { cachePath, loadCache, DEFAULT_MAX_ENTRIES, DEFAULT_THRESHOLD } from "./cache.ts";
 import type { ClassificationPipeline } from "./classification-pipeline.ts";
 import { setupDebug, debug, debugMeasure } from "./debug.ts";
+import { isJevModelReference } from "./classifier.ts";
 import { runProbe, PROBE_PROMPT_TEXT, type ProbeResult } from "./probe.ts";
 import {
   buildDiscoveryMetadata,
@@ -1514,11 +1515,15 @@ export function createCommandRouter(
       }
 
       const classifierPattern = state.config.classifier?.model;
-      if (classifierPattern && state.classifierEnabled) {
+      const classifierPatterns = Array.isArray(classifierPattern)
+        ? classifierPattern
+        : classifierPattern ? [classifierPattern] : [];
+      const hasDirectClassifier = !!state.config.classifier?.endpoint ||
+        classifierPatterns.some(isJevModelReference);
+      if (classifierPattern && state.classifierEnabled && !hasDirectClassifier) {
         const classified = diagnoseCandidates(ctx, classifierPattern);
         if (classified.candidates.length === 0) {
-          const patternStr = Array.isArray(classifierPattern) ? classifierPattern[0] : classifierPattern;
-          diagnostics.push(classifierModelMissing(patternStr));
+          diagnostics.push(classifierModelMissing(classifierPatterns[0]));
         }
       }
 

@@ -339,7 +339,7 @@
             { "type": "string" },
             { "type": "array", "items": { "type": "string" } }
           ],
-          "description": "Primary classifier model pattern(s). Use the cheapest model you trust — each classification costs tokens. If you pass an array, items are tried in order. Example: 'ollama/qwen2.5-coder:latest'"
+          "description": "Primary classifier model pattern(s). Use the cheapest model you trust — each classification costs tokens. If you pass an array, items are tried in order. Native Jev references are 'typesafe/jev-latest' and 'openrouter/~typesafe/jev-latest'."
         },
         "fallbackModels": {
           "type": "array",
@@ -349,6 +349,12 @@
         "endpoint": {
           "type": "string",
           "description": "Optional base URL for the classifier when the model is not in pi's model registry. Example: 'http://127.0.0.1:1234/v1'. When set, only method='direct' works for that endpoint."
+        },
+        "jevCredentialTarget": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Windows Credential Manager generic target containing the direct TypeSafe Jev API key.",
+          "default": "pi-bifrost/jev-api-key"
         },
         "method": {
           "type": "string",
@@ -401,7 +407,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Minimum LLM-reported confidence (0-1) required to accept a classifier tier. Missing or lower confidence falls through to regex/default, keeping the current model stable and reducing model-switch cache misses.",
+          "description": "Minimum classifier confidence (0-1) required to accept a tier. Jev uses its native choice confidence; text models must report a score. Missing or lower confidence falls through to regex/default.",
           "default": 0.4
         },
         "categoryDescriptions": {

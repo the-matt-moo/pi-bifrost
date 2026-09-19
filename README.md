@@ -289,20 +289,18 @@ Shortcuts are machine-local and unbound by default — Pi's extension API takes 
 
 Manual model selection already pins Bifrost, so a separate `pin` key is usually unnecessary. `toggle` combines pin and unpin into one key. Pick keys the host does not reserve (`shift+tab`, `ctrl+c/d/l/o/t`, and the model-cycle keys are reserved). Reserved keys are skipped with a startup diagnostic.
 
-Classifier latency controls are optional and backward-compatible:
+Classifier latency controls are optional and backward-compatible. Jev uses its native Choice API, with direct TypeSafe first and OpenRouter as the transport fallback:
 
 ```json
 {
   "classifier": {
-    "model": "openai-codex/gpt-5.4-mini",
-    "fallbackModels": [
-      "anthropic/claude-haiku-4-5",
-      "antigravity/gemini-3.6-flash"
-    ],
+    "model": "typesafe/jev-latest",
+    "fallbackModels": ["openrouter/~typesafe/jev-latest"],
+    "jevCredentialTarget": "pi-bifrost/jev-api-key",
+    "method": "direct",
     "timeoutMs": 10000,
     "maxAttempts": 2,
     "cooldownSeconds": 60,
-    "maxTokens": 8,
     "confidenceThreshold": 0.4,
     "fallbackToRegex": true,
     "categoryDescriptions": {
@@ -312,7 +310,9 @@ Classifier latency controls are optional and backward-compatible:
 }
 ```
 
-`classifier.categoryDescriptions` overrides the built-in per-category description sent to the classifier LLM. Known categories (`quick`, `general`, `writing`, `coding`, `frontier`) already have a built-in description; custom categories fall back to a description generated from their regex rules.
+Store the TypeSafe API key as a **Generic Credential** in Windows Credential Manager under `pi-bifrost/jev-api-key` (or the configured target). Bifrost reads it through `CredRead`; it is not stored in JSON or logged. The OpenRouter fallback reuses Pi's existing `openrouter` provider credential.
+
+`classifier.categoryDescriptions` overrides the built-in per-category description sent to the classifier. Jev receives those descriptions as native Choice criteria; text classifiers receive them in the prompt. Known categories (`quick`, `general`, `writing`, `coding`, `frontier`) already have built-in descriptions; custom categories fall back to descriptions generated from their regex rules.
 
 `strictCategories` (default `["coding"]` once `coding` is configured) marks categories whose model resolution must not silently fall back to another category:
 

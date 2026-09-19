@@ -2,6 +2,13 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.10.0 - 18-09-2026
+
+### Added
+- Native Jev decision classifier: `typesafe/jev-*` and `openrouter/~typesafe/jev-*` model references route to Jev's Choice API (direct TypeSafe first, then OpenRouter fallback), with category descriptions sent as native Choice criteria.
+- Windows Credential Manager retrieval for the direct TypeSafe Jev API key via `classifier.jevCredentialTarget` (`pi-bifrost/jev-api-key` default); key is read through `CredRead` and never stored in JSON or logged.
+- `setup-typesafe.ps1` helper to store the TypeSafe Jev API key as a Windows Generic Credential.
+
 ## 4.9.1 - 16-09-2026
 
 ### Fixed

@@ -101,6 +101,14 @@ describe("validateConfig", () => {
     assert.equal(errors.length, 3);
   });
 
+  it("errors on an empty Jev credential target", () => {
+    const issues = validateConfig({
+      ...baseConfig,
+      classifier: { model: "typesafe/jev-latest", jevCredentialTarget: "   " },
+    });
+    assert.ok(issues.some((issue) => issue.severity === "error" && issue.message.includes("jevCredentialTarget")));
+  });
+
   it("errors on invalid regex in rules", () => {
     const issues = validateConfig({
       ...baseConfig,

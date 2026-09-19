@@ -2,7 +2,12 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { classifyWithLLM as invokeClassifier, type ClassifierModel } from "./classifier.js";
+import {
+  classifyWithLLM as invokeClassifier,
+  jevClassifierForReference,
+  isJevModelReference,
+  type ClassifierModel,
+} from "./classifier.js";
 
 import {
   autoPinSource,
@@ -104,7 +109,19 @@ function resolveClassifierModels(
     return patterns.map((id) => endpointClassifier(id, endpoint));
   }
 
-  return scopedCandidates(ctx, patterns).map((model) => ({ kind: "registry" as const, model }));
+  const seen = new Set<string>();
+  return patterns.flatMap<ClassifierModel>((pattern) => {
+    const jev = jevClassifierForReference(pattern, config.classifier?.jevCredentialTarget);
+    if (jev) return [jev];
+    return scopedCandidates(ctx, pattern)
+      .filter((model) => {
+        const key = modelKey(model);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((model) => ({ kind: "registry" as const, model }));
+  });
 }
 
 function endpointClassifier(id: string, endpoint: string): ClassifierModel {
@@ -574,7 +591,12 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         }
       }
       const classifierPattern = state.config.classifier?.model;
-      if (classifierPattern && state.classifierEnabled) {
+      const classifierPatterns = Array.isArray(classifierPattern)
+        ? classifierPattern
+        : classifierPattern ? [classifierPattern] : [];
+      const hasDirectClassifier = !!state.config.classifier?.endpoint ||
+        classifierPatterns.some(isJevModelReference);
+      if (classifierPattern && state.classifierEnabled && !hasDirectClassifier) {
         const { candidates } = diagnoseCandidates(ctx, classifierPattern);
         if (candidates.length === 0) {
           const patternStr = Array.isArray(classifierPattern) ? classifierPattern[0] : classifierPattern;

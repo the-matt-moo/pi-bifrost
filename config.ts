@@ -22,6 +22,8 @@ export interface ClassifierConfig {
   /** Ordered fallback classifier models tried after `model`. */
   fallbackModels?: string[];
   endpoint?: string;
+  /** Generic credential target containing the direct TypeSafe Jev API key. */
+  jevCredentialTarget?: string;
   method?: ClassifierMethod;
   systemPrompt?: string;
   maxTokens?: number;
@@ -352,6 +354,9 @@ export function validateConfig(
   if (classifier?.confidenceThreshold !== undefined &&
       (!Number.isFinite(classifier.confidenceThreshold) || classifier.confidenceThreshold < 0 || classifier.confidenceThreshold > 1)) {
     issues.push({ severity: "error", message: `Classifier confidenceThreshold must be between 0 and 1, got ${classifier.confidenceThreshold}.` });
+  }
+  if (classifier?.jevCredentialTarget !== undefined && !classifier.jevCredentialTarget.trim()) {
+    issues.push({ severity: "error", message: "Classifier jevCredentialTarget must not be empty." });
   }
   const quota = config.quotaRouting;
   if (quota?.reservePercent !== undefined && (quota.reservePercent < 0 || quota.reservePercent > 1)) {

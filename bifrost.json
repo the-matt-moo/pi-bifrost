@@ -15,8 +15,10 @@
 
   "classifier": {
     "enabled": true,
-    "model": "openai-codex/gpt-5.4-mini",
-    "method": "auto",
+    "model": "typesafe/jev-latest",
+    "fallbackModels": ["openrouter/~typesafe/jev-latest"],
+    "jevCredentialTarget": "pi-bifrost/jev-api-key",
+    "method": "direct",
     "fallbackToRegex": true,
     "confidenceThreshold": 0.4,
     "maxTokens": 8
