@@ -2,7 +2,14 @@
 
 All notable changes to pi-bifrost are documented here.
 
-## 4.10.0 - 18-09-2026
+## 4.10.1 - 19-09-2026
+
+### Fixed
+- Unscoped and subagent model resolution: `scopedCandidates` now falls back to all registry candidates when `ctx.scopedModels` is empty or undefined, aligning with Pi's extension specification and preventing total tier unavailability in subagents and unscoped sessions.
+- Anthropic quota telemetry: resolved OAuth token path from `auth.anthropic` in `auth.json` (previously looked under nonexistent `providers.anthropic`), and corrected percentage-to-fraction utilization parsing so session limit exhaustion is properly recognized.
+- Antigravity multi-bucket quota tracking: split quota summaries into family-specific buckets (`antigravity:claude` vs `antigravity:gemini`) so exhausted 3P quota does not inherit Gemini headroom.
+- Circuit cooldown duration: explicit wait times (e.g. `Please wait 15h49m21s`) now set the circuit open duration to the parsed wait time instead of collapsing into a 45-second transient burst limit.
+- Account-level rate limits: account-wide rate limit errors now open a provider-level circuit, and auto-retry avoids re-attempting the same provider when alternatives exist in the tier.
 
 ### Added
 - Native Jev decision classifier: `typesafe/jev-*` and `openrouter/~typesafe/jev-*` model references route to Jev's Choice API (direct TypeSafe first, then OpenRouter fallback), with category descriptions sent as native Choice criteria.

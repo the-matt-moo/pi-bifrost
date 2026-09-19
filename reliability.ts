@@ -101,12 +101,22 @@ export function getCircuitState(
 ): CircuitState {
   const resolved = resolveReliabilityConfig(config);
   const record = state.models[model];
-  const failures = pruneFailures(record?.failures ?? [], now, resolved.windowMinutes);
-  const openUntil = record?.openUntil;
+  const slash = model.indexOf("/");
+  const providerKey = slash > 0 ? model.slice(0, slash) : undefined;
+  const providerRecord = providerKey ? state.models[providerKey] : undefined;
+
+  const modelFailures = pruneFailures(record?.failures ?? [], now, resolved.windowMinutes);
+  const providerFailures = providerRecord ? pruneFailures(providerRecord.failures ?? [], now, resolved.windowMinutes) : [];
+  const failures = [...modelFailures, ...providerFailures];
+
+  const modelOpenUntil = record?.openUntil ?? 0;
+  const providerOpenUntil = providerRecord?.openUntil ?? 0;
+  const openUntil = Math.max(modelOpenUntil, providerOpenUntil) || undefined;
+
   return {
     open: !!openUntil && openUntil > now,
-    halfOpen: !!openUntil && openUntil <= now && !record?.trialActive,
-    trialActive: !!record?.trialActive,
+    halfOpen: !!openUntil && openUntil <= now && !record?.trialActive && !providerRecord?.trialActive,
+    trialActive: !!record?.trialActive || !!providerRecord?.trialActive,
     openUntil,
     recentFailures: failures.length,
   };
@@ -114,6 +124,23 @@ export function getCircuitState(
 
 /** Any transient provider-side limit (429, rate limit, resource exhaustion, quota) — use a short cooldown instead of the full circuit-breaker window. */
 const TRANSIENT_LIMIT_COOLDOWN_MS = 45_000;
+
+export function parseCooldownFromReason(reason: string): number | undefined {
+  const match = reason.match(/(?:please\s+)?wait\s+(?:(\d+)\s*d(?:ays?)?)?\s*(?:(\d+)\s*h(?:ours?|rs?)?)?\s*(?:(\d+)\s*m(?:in(?:utes?)?)?)?\s*(?:(\d+)\s*s(?:ec(?:onds?)?)?)?/i);
+  if (match && (match[1] || match[2] || match[3] || match[4])) {
+    const days = Number(match[1] || 0);
+    const hours = Number(match[2] || 0);
+    const minutes = Number(match[3] || 0);
+    const seconds = Number(match[4] || 0);
+    const totalMs = (((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000;
+    if (totalMs > 0) return totalMs;
+  }
+  return undefined;
+}
+
+export function isAccountLevelLimit(reason: string): boolean {
+  return /account(?:'s)?\s+(?:rate\s+limit|quota|usage\s+limit)|organization.*rate.?limit/i.test(reason);
+}
 
 export function isRetryableProviderLimit(reason: string): boolean {
   return /\b429\b|\b50[234]\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)|quota_exceeded|rate_limit|insufficient.*(?:quota|balance|credit)|temporarily overloaded|overloaded|service unavailable/i.test(reason);
@@ -142,14 +169,16 @@ export function recordModelFailure(
 
   const current = state.models[model] ?? { failures: [] };
   const wasTrial = current.trialActive;
-  const rateLimited = isTransientProviderLimit(reason);
+  const explicitCooldown = parseCooldownFromReason(reason);
+  const isQuota = /quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)/i.test(reason);
+  const rateLimited = !isQuota && isTransientProviderLimit(reason);
   const multiplier = rateLimited ? (current.cooldownMultiplier ?? 1) : (wasTrial ? (current.cooldownMultiplier ?? 1) * 2 : (current.cooldownMultiplier ?? 1));
-  const cooldownMs = rateLimited ? TRANSIENT_LIMIT_COOLDOWN_MS : resolved.cooldownMinutes * 60_000 * multiplier;
+  const cooldownMs = explicitCooldown ?? (rateLimited ? TRANSIENT_LIMIT_COOLDOWN_MS : resolved.cooldownMinutes * 60_000 * multiplier);
   const failures = [...pruneFailures(current.failures, now, resolved.windowMinutes), now];
   const immediateOpen = shouldOpenImmediately(source, reason);
   const openUntil = immediateOpen || failures.length >= resolved.failureThreshold ? now + cooldownMs : current.openUntil;
 
-  return {
+  let nextState: ReliabilityState = {
     ...state,
     models: {
       ...state.models,
@@ -165,6 +194,30 @@ export function recordModelFailure(
       },
     },
   };
+
+  const slash = model.indexOf("/");
+  if (slash > 0 && isAccountLevelLimit(reason)) {
+    const providerKey = model.slice(0, slash);
+    const provCurrent = nextState.models[providerKey] ?? { failures: [] };
+    const provFailures = [...pruneFailures(provCurrent.failures, now, resolved.windowMinutes), now];
+    nextState = {
+      ...nextState,
+      models: {
+        ...nextState.models,
+        [providerKey]: {
+          ...provCurrent,
+          failures: provFailures,
+          openUntil,
+          trialActive: false,
+          lastFailureAt: now,
+          lastFailureSource: source,
+          lastFailureReason: reason,
+        },
+      },
+    };
+  }
+
+  return nextState;
 }
 
 export function recordModelSuccess(

@@ -39,7 +39,6 @@ import {
   billingClass,
   diagnoseCandidates,
   applySubscriptionGuard,
-  findCandidates,
   findOneModel,
   getStrategy,
   guessTier,
@@ -48,6 +47,7 @@ import {
   resolveModelWithFallback,
   resolveHealthyModel,
   retryUnavailableResolution,
+  scopedCandidates,
   selectComparableAvailableModel,
   selectImageCapableModelFromGroups,
   supportsImageInput,
@@ -79,14 +79,6 @@ import {
 } from "./ux-status.js";
 
 // ── Pipeline builder (composition root) ────────────────────────
-
-function scopedCandidates(
-  ctx: ExtensionContext,
-  pattern: string | string[] | undefined,
-) {
-  const scoped = new Set(ctx.scopedModels.map(({ model }) => modelKey(model)));
-  return findCandidates(ctx, pattern).filter((model) => scoped.has(modelKey(model)));
-}
 
 function classifierModelPatterns(config: BifrostConfig): string[] {
   const primary = config.classifier?.model;
@@ -347,8 +339,10 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     // Unconfigured tiers may derive candidates only from Pi's scoped-model selection.
     // "writing" has no guessTier class; alias to "general" for candidate lookup.
     const inferredTier = tier === "writing" ? "general" : tier;
-    return ctx.scopedModels
-      .map(({ model }) => model)
+    const pool = ctx.scopedModels && ctx.scopedModels.length > 0
+      ? ctx.scopedModels.map(({ model }) => model)
+      : ctx.modelRegistry.getAvailable();
+    return pool
       .filter((model) => guessTier(model) === inferredTier)
       .map(modelKey);
   }
@@ -659,11 +653,19 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }
 
     const tier = retry.tier;
+    const failedSlash = settled.model.indexOf("/");
+    const failedProvider = failedSlash > 0 ? settled.model.slice(0, failedSlash) : undefined;
     const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
     const defaultTier = state.config.default;
+    let candidates = diagnoseCandidates(ctx, inferPattern(ctx, tier)).candidates;
+    // On provider rate-limit or quota failure, avoid retrying the same provider if alternatives exist
+    if (failedProvider && candidates.some((m) => m.provider !== failedProvider)) {
+      candidates = candidates.filter((m) => m.provider !== failedProvider);
+    }
     const resolved = resolveModelWithFallback(ctx, {
       requestedTier: tier,
-      requestedPattern: inferPattern(ctx, tier),
+      requestedPattern: candidates.map(modelKey),
+      requestedCandidates: candidates,
       requestedStrategy: strategy,
       defaultTier,
       defaultPattern: defaultTier ? inferPattern(ctx, defaultTier) : undefined,
@@ -860,9 +862,12 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const quota = quotaStore.getSnapshot();
       if (current && isProviderQuotaExhausted(current, quota, state.config.quotaRouting, now)) {
         const tier = guessTier(current);
+        const pool = ctx.scopedModels && ctx.scopedModels.length > 0
+          ? ctx.scopedModels.map(({ model }) => model)
+          : ctx.modelRegistry.getAvailable();
         const replacement = selectComparableAvailableModel(
           current,
-          ctx.scopedModels.map(({ model }) => model),
+          pool,
           getStrategy(state.config.categoryStrategies, state.config.strategy, tier),
           quota,
           state.config.quotaRouting,

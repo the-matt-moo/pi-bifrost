@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getCircuitState, type ReliabilityConfig, type ReliabilityState } from "./reliability.ts";
-import type { QuotaRoutingConfig, QuotaSnapshot } from "./quota.ts";
+import type { QuotaRoutingConfig, QuotaSnapshot, ProviderQuota } from "./quota.ts";
 
 export type RoutingStrategy =
   | "first"
@@ -155,6 +155,23 @@ export function diagnoseCandidates(
 }
 
 /**
+ * Resolves candidate models matching pattern, respecting Pi's scoped-model selection
+ * (`ctx.scopedModels`) when configured. When `scopedModels` is empty or undefined,
+ * all available models in the registry are in scope (as per Pi extension spec).
+ */
+export function scopedCandidates(
+  ctx: ExtensionContext,
+  pattern: string | string[] | undefined,
+): Model<Api>[] {
+  const candidates = findCandidates(ctx, pattern);
+  if (!ctx.scopedModels || ctx.scopedModels.length === 0) {
+    return candidates;
+  }
+  const scoped = new Set(ctx.scopedModels.map(({ model }) => modelKey(model)));
+  return candidates.filter((model) => scoped.has(modelKey(model)));
+}
+
+/**
  * Shared logic for subscription_balance and subscription_preferred.
  *
  * Partition candidates by billing class.  Subscription models with
@@ -222,7 +239,7 @@ function hasUsableQuota(
   const fresh = now - quota.fetchedAt < (cfg?.staleMinutes ?? 15) * 60_000;
   if (!fresh) return true; // stale → assume usable, don't punish
 
-  const pq = quota.byProvider[model.provider];
+  const pq = getModelQuota(model, quota);
   if (!pq) return true; // no data → assume usable
 
   const weeklyReserve = cfg?.reservePercent ?? 0.03;
@@ -284,6 +301,26 @@ export function billingClass(model: Model<Api>): BillingClass {
   return "unknown";
 }
 
+/**
+ * Look up quota for a specific model, resolving sub-provider buckets
+ * (e.g. `antigravity:claude` vs `antigravity:gemini`) when present.
+ */
+export function getModelQuota(
+  model: Model<Api>,
+  quota: QuotaSnapshot | undefined,
+): ProviderQuota | undefined {
+  if (!quota) return undefined;
+  if (model.provider === "antigravity") {
+    if (/claude|gpt/i.test(model.id)) {
+      return quota.byProvider["antigravity:claude"] ?? quota.byProvider["antigravity"];
+    }
+    if (/gemini/i.test(model.id)) {
+      return quota.byProvider["antigravity:gemini"] ?? quota.byProvider["antigravity"];
+    }
+  }
+  return quota.byProvider[model.provider];
+}
+
 const WEEKLY_BALANCE_TOLERANCE = 0.10;
 
 function weeklyQuotaPreference(
@@ -298,7 +335,7 @@ function weeklyQuotaPreference(
   const byProvider = new Map<string, number>();
   for (const model of candidates) {
     if (billingClass(model) !== "subscription") continue;
-    const remaining = quota.byProvider[model.provider]?.weeklyRemainingFraction;
+    const remaining = getModelQuota(model, quota)?.weeklyRemainingFraction;
     if (typeof remaining === "number") byProvider.set(model.provider, remaining);
   }
   if (byProvider.size < 2) return { candidates, ignoreWeeklyQuota: false };
@@ -353,11 +390,11 @@ export function subscriptionWeights(
     ? candidates.filter(
         (m) =>
           billingClass(m) === "subscription" &&
-          typeof quota!.byProvider[m.provider]?.weeklyRemainingFraction === "number",
+          typeof getModelQuota(m, quota)?.weeklyRemainingFraction === "number",
       )
     : [];
   const anySubAboveReserve = measuredSubs.some((m) => {
-    const w = quota!.byProvider[m.provider]?.weeklyRemainingFraction;
+    const w = getModelQuota(m, quota)?.weeklyRemainingFraction;
     return typeof w === "number" && w > reserve;
   });
   // 0.5-for-unmeasured only applies when we DO have signal on another
@@ -372,7 +409,7 @@ export function subscriptionWeights(
         return anySubAboveReserve ? 0 : 1;
       case "subscription": {
         if (!fresh || !anyMeasuredSub) return 1;
-        const w = quota!.byProvider[m.provider]?.weeklyRemainingFraction;
+        const w = getModelQuota(m, quota)?.weeklyRemainingFraction;
         if (typeof w !== "number") return 0.5; // unmeasured: conservative, not dominant
         if (w <= reserve) return 0.05; // measured & drained — lose to credits
         return Math.pow(w, gamma);
@@ -436,7 +473,7 @@ export function isProviderQuotaExhausted(
   now = Date.now(),
 ): boolean {
   if (!quota || now - quota.fetchedAt >= (quotaConfig?.staleMinutes ?? 15) * 60_000) return false;
-  const remaining = quota.byProvider[model.provider]?.weeklyRemainingFraction;
+  const remaining = getModelQuota(model, quota)?.weeklyRemainingFraction;
   return typeof remaining === "number" && remaining <= (quotaConfig?.reservePercent ?? 0.03);
 }
 
@@ -477,7 +514,7 @@ export function filterQuotaExhausted(
   const skipped: SkippedCandidate[] = [];
   const filtered = candidates.filter((model) => {
     if (billingClass(model) !== "subscription") return true;
-    const remaining = quota.byProvider[model.provider]?.weeklyRemainingFraction;
+    const remaining = getModelQuota(model, quota)?.weeklyRemainingFraction;
     // No data: keep the model (conservative — unmeasured means unblocked)
     if (typeof remaining !== "number") return true;
     if (remaining <= reserve) {
@@ -513,7 +550,7 @@ export function filterSessionExhausted(
   const skipped: SkippedCandidate[] = [];
   const filtered = candidates.filter((model) => {
     if (billingClass(model) !== "subscription") return true;
-    const remaining = quota.byProvider[model.provider]?.sessionRemainingFraction;
+    const remaining = getModelQuota(model, quota)?.sessionRemainingFraction;
     // No session data: keep the model (unmeasured means unblocked)
     if (typeof remaining !== "number") return true;
     // 0% remaining is a hard block for every tier; no request squeezes through.

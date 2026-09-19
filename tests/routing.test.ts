@@ -1,9 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   findOneModel,
   findCandidates,
+  scopedCandidates,
   selectModel,
   resolveModel,
   resolveHealthyModel,
@@ -120,6 +122,41 @@ describe("routing", () => {
       ]);
       const candidates = findCandidates(ctx, ["anthropic/claude-opus", "lmstudio"]);
       assert.equal(candidates.length, 2);
+    });
+  });
+
+  describe("scopedCandidates", () => {
+    it("returns all candidates when scopedModels is undefined", () => {
+      const ctx = makeCtx([
+        makeModel("anthropic", "claude-opus", 15),
+        makeModel("openrouter", "deepseek/deepseek-v4-pro", 1),
+      ]);
+      const candidates = scopedCandidates(ctx, ["anthropic/claude-opus", "openrouter/deepseek/deepseek-v4-pro"]);
+      assert.equal(candidates.length, 2);
+    });
+
+    it("returns all candidates when scopedModels is empty (subagent or unscoped session)", () => {
+      const ctx = {
+        ...makeCtx([
+          makeModel("anthropic", "claude-opus", 15),
+          makeModel("openrouter", "deepseek/deepseek-v4-pro", 1),
+        ]),
+        scopedModels: [],
+      } as unknown as ExtensionContext;
+      const candidates = scopedCandidates(ctx, ["anthropic/claude-opus", "openrouter/deepseek/deepseek-v4-pro"]);
+      assert.equal(candidates.length, 2);
+    });
+
+    it("filters candidates when scopedModels is configured", () => {
+      const opus = makeModel("anthropic", "claude-opus", 15);
+      const deepseek = makeModel("openrouter", "deepseek/deepseek-v4-pro", 1);
+      const ctx = {
+        ...makeCtx([opus, deepseek]),
+        scopedModels: [{ model: deepseek }],
+      } as unknown as ExtensionContext;
+      const candidates = scopedCandidates(ctx, ["anthropic/claude-opus", "openrouter/deepseek/deepseek-v4-pro"]);
+      assert.equal(candidates.length, 1);
+      assert.equal(candidates[0].id, "deepseek/deepseek-v4-pro");
     });
   });
 

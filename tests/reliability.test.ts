@@ -8,6 +8,8 @@ import {
   emptyReliabilityState,
   getCircuitState,
   isRetryableProviderLimit,
+  isAccountLevelLimit,
+  parseCooldownFromReason,
   loadReliability,
   recordModelFailure,
   recordModelSuccess,
@@ -247,5 +249,24 @@ describe("reliability", () => {
     assert.equal(circuit.open, true);
     assert.equal(circuit.openUntil, t1 + 120 * 60_000);
     assert.equal(circuit.trialActive, false);
+  });
+
+  it("parses explicit cooldown durations from error text", () => {
+    assert.equal(parseCooldownFromReason("Quota reached. Please wait 15h49m21s. Next: switch models"), 56_961_000);
+    assert.equal(parseCooldownFromReason("Please wait 20s."), 20_000);
+    assert.equal(parseCooldownFromReason("429 Too Many Requests"), undefined);
+  });
+
+  it("account-level limits open provider-wide circuit", () => {
+    const reason = "429: This request would exceed your account's rate limit. Please try again later.";
+    assert.equal(isAccountLevelLimit(reason), true);
+    const cfg = { ...DEFAULT_RELIABILITY, failureThreshold: 1, windowMinutes: 5, cooldownMinutes: 60 };
+    const t0 = Date.UTC(2026, 0, 1, 12, 0, 0);
+    let state = recordModelFailure(emptyReliabilityState(), "anthropic/claude-opus-4-6", cfg, t0, "agent_settled", reason);
+    // Both the failed model and sibling models under the same provider are open
+    assert.equal(getCircuitState(state, "anthropic/claude-opus-4-6", t0, cfg).open, true);
+    assert.equal(getCircuitState(state, "anthropic/claude-sonnet-5", t0, cfg).open, true);
+    // Models from another provider are unaffected
+    assert.equal(getCircuitState(state, "openai-codex/gpt-5.6-terra", t0, cfg).open, false);
   });
 });

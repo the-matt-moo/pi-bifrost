@@ -130,7 +130,7 @@ async function fetchCodexQuota(): Promise<ProviderQuota | undefined> {
   }
 }
 
-async function fetchAntigravityQuota(): Promise<ProviderQuota | undefined> {
+async function fetchAntigravityQuota(): Promise<ProviderQuota | Record<string, ProviderQuota> | undefined> {
   const token = getAntigravityToken();
   if (!token) return undefined;
   const endpoints = [
@@ -153,18 +153,39 @@ async function fetchAntigravityQuota(): Promise<ProviderQuota | undefined> {
       if (!res.ok) continue;
       const json = (await res.json()) as any;
       const groups = json.groups || [];
+      const quotas: Record<string, ProviderQuota> = {};
+      let minWeekly = 1;
+      let minHours: number | undefined;
+
       for (const g of groups) {
+        const is3P = /claude|gpt|3p/i.test(g.displayName || g.description || "");
+        const key = is3P ? "antigravity:claude" : "antigravity:gemini";
+        const pq: ProviderQuota = {};
         for (const b of g.buckets || []) {
           const w = (b.window || b.bucketId || b.displayName || "").toLowerCase();
-          if (!(w.includes("week") || w.includes("7d"))) continue;
+          const isWeekly = w.includes("week") || w.includes("7d");
+          const isSession = w.includes("5h") || w.includes("session");
           if (typeof b.remainingFraction !== "number") continue;
-          const hours = b.resetTime
-            ? Math.max(0, (Date.parse(b.resetTime) - Date.now()) / 3_600_000)
-            : undefined;
-          if (Number.isNaN(hours)) return { weeklyRemainingFraction: b.remainingFraction };
-          return { weeklyRemainingFraction: b.remainingFraction, hoursToReset: hours };
+          if (isWeekly) {
+            pq.weeklyRemainingFraction = b.remainingFraction;
+            if (b.resetTime) {
+              pq.hoursToReset = Math.max(0, (Date.parse(b.resetTime) - Date.now()) / 3_600_000);
+            }
+            if (b.remainingFraction < minWeekly) {
+              minWeekly = b.remainingFraction;
+              minHours = pq.hoursToReset;
+            }
+          } else if (isSession) {
+            pq.sessionRemainingFraction = b.remainingFraction;
+          }
         }
+        quotas[key] = pq;
       }
+      quotas["antigravity"] = {
+        weeklyRemainingFraction: minWeekly,
+        hoursToReset: minHours,
+      };
+      return quotas;
     } catch {}
   }
   return undefined;
@@ -173,11 +194,15 @@ async function fetchAntigravityQuota(): Promise<ProviderQuota | undefined> {
 // ── Store ──────────────────────────────────────────────────────────
 
 function getAnthropicToken(): string | undefined {
+  if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
   try {
-    const authPath = join(getAgentDir(), "auth.json");
-    if (!existsSync(authPath)) return undefined;
-    const json = JSON.parse(readFileSync(authPath, "utf-8"));
-    return json?.providers?.anthropic?.accessToken;
+    const auth = getAuth();
+    return (
+      auth.anthropic?.access ||
+      auth.anthropic?.token ||
+      auth.anthropic?.key ||
+      auth.providers?.anthropic?.accessToken
+    );
   } catch {
     return undefined;
   }
@@ -200,6 +225,7 @@ async function fetchAnthropicQuota(): Promise<ProviderQuota | undefined> {
     
     // Weekly balancing prefers the 7-day window; falls back to the session
     // (5-hour) window only when weekly telemetry is absent.
+    const utilFraction = (u: number) => (u <= 1 ? u : u / 100);
     const weekly = json?.seven_day;
     const session = json?.five_hour;
     const weeklyUsage = weekly?.utilization !== undefined ? weekly : session;
@@ -212,13 +238,13 @@ async function fetchAnthropicQuota(): Promise<ProviderQuota | undefined> {
     }
 
     const result: ProviderQuota = {
-      weeklyRemainingFraction: Math.max(0, 1 - weeklyUsage.utilization),
+      weeklyRemainingFraction: Math.max(0, 1 - utilFraction(weeklyUsage.utilization)),
       hoursToReset,
     };
     // The session window drives the hard 429-avoidance filter. A session can be
     // fully drained while the weekly window still shows headroom.
     if (session && typeof session.utilization === "number") {
-      result.sessionRemainingFraction = Math.max(0, 1 - session.utilization);
+      result.sessionRemainingFraction = Math.max(0, 1 - utilFraction(session.utilization));
     }
     return result;
   } catch {
@@ -228,7 +254,7 @@ async function fetchAnthropicQuota(): Promise<ProviderQuota | undefined> {
 
 type QuotaFetcher = () => Promise<[
   ProviderQuota | undefined,
-  ProviderQuota | undefined,
+  ProviderQuota | Record<string, ProviderQuota> | undefined,
   ProviderQuota | undefined,
 ]>;
 
@@ -284,7 +310,13 @@ export class QuotaStore {
     const [codex, ag, anthropic] = await this.fetchQuotas();
     const byProvider: Record<string, ProviderQuota> = {};
     if (codex) byProvider["openai-codex"] = codex;
-    if (ag) byProvider["antigravity"] = ag;
+    if (ag) {
+      if ("weeklyRemainingFraction" in ag) {
+        byProvider["antigravity"] = ag as ProviderQuota;
+      } else {
+        Object.assign(byProvider, ag);
+      }
+    }
     if (anthropic) byProvider["anthropic"] = anthropic;
     // Static config pins always win over live telemetry.
     for (const [provider, pinned] of Object.entries(this.cfg?.providers ?? {})) {
