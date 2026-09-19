@@ -32,13 +32,15 @@ export interface PipelineDeps {
   readonly cacheLookup: (text: string) => string | undefined;
   /** Classifier models in priority order. Empty array = skip LLM. */
   readonly classifierModels: readonly ClassifierModel[];
-  /** Invoke the LLM classifier for a single model. Returns tier or undefined. */
+  /** Invoke the LLM classifier for a single model. Returns tier or undefined.
+   *  When the classifier is a Jev model, result may carry `jevExtras` with
+   *  `isTrivial` noul and `effort` score for confidence-gated routing. */
   readonly classifyWithLLM: (
     model: ClassifierModel,
     text: string,
     tiers: readonly string[],
     signal?: AbortSignal,
-  ) => Promise<ClassifierAttempt | string | undefined>;
+  ) => Promise<ClassifierAttempt & { jevExtras?: { isTrivial?: number; effort?: number } } | string | undefined>;
   /** Regex routing rules. First match wins. */
   readonly regexRules: readonly RouteRule[];
   /** Default tier when nothing matches. */
@@ -172,14 +174,36 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
               classifyWithLLM(model, text, tiers, controller.signal),
               timedOut,
             ]);
-            const outcome = typeof rawOutcome === "string"
-              ? { status: "accepted" as const, tier: rawOutcome }
-              : rawOutcome;
-            endLLM({ model: modelId, status: outcome?.status });
+            const { jevExtras, ...outcomeOnly } =
+              typeof rawOutcome === "string"
+                ? { status: "accepted" as const, tier: rawOutcome, jevExtras: undefined }
+                : (rawOutcome ?? { status: "failed" as const, jevExtras: undefined });
+            const outcome = outcomeOnly as ClassifierAttempt;
+            endLLM({ model: modelId, status: outcome?.status, extras: !!jevExtras });
             if (outcome?.status === "accepted" && tiers.includes(outcome.tier)) {
               classifierCooldowns.delete(modelId);
               debug("pipeline", "result", { source: "classifier", tier: outcome.tier });
               return { kind: "classified", tier: outcome.tier, source: "classifier" };
+            }
+            // Confidence-gated routing: Jev rejected but isTrivial suggests fast tier
+            if (outcome?.status === "rejected" && jevExtras?.isTrivial !== undefined && jevExtras.isTrivial > 0.8) {
+              const fastTier = tiers.find((t) => t === "fast" || t === "quick");
+              if (fastTier) {
+                debug("pipeline", "result", { source: "classifier", tier: fastTier, jevTrivial: true });
+                return { kind: "classified", tier: fastTier, source: "classifier" };
+              }
+            }
+            // Confidence-gated routing: Jev accepted but effort is high — promote tier
+            if (
+              outcome?.status === "accepted" &&
+              jevExtras?.effort !== undefined &&
+              jevExtras.effort >= 1.5
+            ) {
+              const frontierTier = tiers.find((t) => t === "frontier");
+              if (frontierTier && outcome.tier !== frontierTier) {
+                debug("pipeline", "result", { source: "classifier", tier: frontierTier, jevEffortHigh: true });
+                return { kind: "classified", tier: frontierTier, source: "classifier" };
+              }
             }
             if (outcome?.status === "rejected") {
               classifierCooldowns.delete(modelId);

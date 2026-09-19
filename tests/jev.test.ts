@@ -75,6 +75,21 @@ describe("Jev classifier", () => {
             coding: "implementation and debugging",
           },
         },
+        isTrivial: {
+          type: "noul",
+          instructions:
+            "The request can be fully satisfied with a one-line command, a simple lookup, or a single trivial file change.",
+        },
+        effort: {
+          type: "score",
+          instructions:
+            "How much cognitive reasoning depth does this task require?",
+          criteria: [
+            "Simple search, lookup, or trivial one-line change",
+            "Standard implementation, debugging, or refactoring",
+            "Complex multi-file architecture, distributed systems, or security analysis",
+          ],
+        },
       },
     });
   });

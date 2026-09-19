@@ -199,6 +199,11 @@ interface DirectClassification {
   outcome: ClassifierAttempt;
   /** True once a provider/endpoint accepted a direct attempt. */
   attempted: boolean;
+  /** Extra judgments from Jev speculative fan-out: isTrivial noul, effort score. */
+  jevExtras?: {
+    isTrivial?: number;
+    effort?: number;
+  };
 }
 
 export function jevRequest(
@@ -222,6 +227,21 @@ export function jevRequest(
         criteria: Object.fromEntries(
           categories.map((category) => [category, tierDescriptions?.[category] ?? null]),
         ),
+      },
+      isTrivial: {
+        type: "noul",
+        instructions:
+          "The request can be fully satisfied with a one-line command, a simple lookup, or a single trivial file change.",
+      },
+      effort: {
+        type: "score",
+        instructions:
+          "How much cognitive reasoning depth does this task require?",
+        criteria: [
+          "Simple search, lookup, or trivial one-line change",
+          "Standard implementation, debugging, or refactoring",
+          "Complex multi-file architecture, distributed systems, or security analysis",
+        ],
       },
     },
   };
@@ -270,7 +290,11 @@ async function classifyWithJev(
     }
 
     const data = (await response.json()) as {
-      answers?: { category?: { choice?: string; confidence?: number } };
+      answers?: {
+        category?: { choice?: string; confidence?: number };
+        isTrivial?: { noul?: number };
+        effort?: { score?: number };
+      };
     };
     const answer = data.answers?.category;
     if (!answer?.choice) return { attempted: true, outcome: { status: "failed" } };
@@ -280,14 +304,29 @@ async function classifyWithJev(
         (threshold > 0 && (answer.confidence === undefined || answer.confidence < threshold))
       ? { status: "rejected" }
       : { status: "accepted", tier };
+    const isTrivialNoul = data.answers?.isTrivial?.noul;
+    const effortScore = data.answers?.effort?.score;
     debug("classifier", "jev.done", {
       model: classifierModel.id,
       tier,
       confidence: answer.confidence,
       threshold,
       status: outcome.status,
+      isTrivial: isTrivialNoul,
+      effort: effortScore,
     });
-    return { attempted: true, outcome };
+    return {
+      attempted: true,
+      outcome,
+      ...(isTrivialNoul !== undefined || effortScore !== undefined
+        ? {
+            jevExtras: {
+              ...(isTrivialNoul !== undefined ? { isTrivial: isTrivialNoul } : {}),
+              ...(effortScore !== undefined ? { effort: effortScore } : {}),
+            },
+          }
+        : {}),
+    };
   } catch {
     return { attempted: true, outcome: { status: "failed" } };
   }
@@ -541,7 +580,7 @@ export async function classifyWithLLM(
   categories: readonly string[],
   prompt: string,
   options: ClassifierOptions = {},
-): Promise<ClassifierAttempt> {
+): Promise<ClassifierAttempt & { jevExtras?: DirectClassification["jevExtras"] }> {
   const method = options.method ?? "auto";
 
   if (method === "direct" || method === "auto") {
@@ -553,7 +592,7 @@ export async function classifyWithLLM(
       options,
     );
     // A completed direct request must not be repeated through a subprocess.
-    if (direct.attempted) return direct.outcome;
+    if (direct.attempted) return { ...direct.outcome, jevExtras: direct.jevExtras };
   }
 
   if (method === "subprocess" || method === "auto") {
