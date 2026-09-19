@@ -51,7 +51,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 
 ### Subagent Integration
 
-Bifrost exposes an in-process `bifrost:rpc:v1` classification channel for subagent bridges. The `classifyTask` method returns the selected model and thinking level without changing the active Pi session model. This supports Claude Code-style subagent extensions such as `@tintinweb/pi-subagents` and `@gotgenes/pi-subagents`.
+Bifrost exposes an in-process `bifrost:rpc:v1` classification channel for subagent bridges. The `classifyTask` method returns the selected model and thinking level without changing the active Pi session model. This supports Claude Code-style subagent extensions such as `@tintinweb/pi-subagents` and `@gotgenes/pi-subagents`. Child subagent sessions are automatically detected and silenced so background/headless routing logs do not emit raw `stderr` into the terminal or corrupt the parent's fullscreen prompt window.
 
 ### How the Improved Routing Pipeline Works
 

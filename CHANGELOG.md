@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.11.1 - 19-09-2026
+
+### Fixed
+- Subagent TUI corruption: detected headless child/subagent sessions (`tasks/` session path, `parentSession` header, or `PI_SUBAGENT_RUN_ID`) and suppressed terminal stderr writes in `log`, `uiBusy`, `logOverwrite`, and `uiResult`, preventing raw subprocess output from overlapping and corrupting the parent's fullscreen prompt window and status bar.
+
 ## 4.11.0 - 19-09-2026
 
 ### Added

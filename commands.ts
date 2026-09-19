@@ -76,13 +76,30 @@ export interface BifrostState {
 
 const silentContexts = new WeakSet<ExtensionContext>();
 
+export function isChildSession(ctx: ExtensionContext): boolean {
+  if (process.env.PI_SUBAGENT_RUN_ID) return true;
+  try {
+    const sessionFile = ctx.sessionManager?.getSessionFile?.();
+    if (sessionFile && /[\\/]tasks[\\/]/.test(sessionFile)) {
+      return true;
+    }
+    const header = ctx.sessionManager?.getHeader?.();
+    if (!ctx.hasUI && header && typeof header === "object" && "parentSession" in header && Boolean((header as { parentSession?: unknown }).parentSession)) {
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
 export function setBifrostSilent(ctx: ExtensionContext, silent: boolean): void {
   if (silent) silentContexts.add(ctx);
   else silentContexts.delete(ctx);
 }
 
-function isBifrostSilent(ctx: ExtensionContext): boolean {
-  return silentContexts.has(ctx);
+export function isBifrostSilent(ctx: ExtensionContext): boolean {
+  return silentContexts.has(ctx) || isChildSession(ctx);
 }
 
 let overwriteActive = false;
@@ -99,8 +116,10 @@ export function logOverwrite(
     }
     return;
   }
-  process.stderr.write(`\r\x1b[2K[bifrost] ${message}`);
-  overwriteActive = true;
+  if (!isChildSession(ctx)) {
+    process.stderr.write(`\r\x1b[2K[bifrost] ${message}`);
+    overwriteActive = true;
+  }
 }
 
 export function finalizeOverwrite(): void {
@@ -118,7 +137,7 @@ export function log(
 ) {
   if (!force && isBifrostSilent(ctx)) return;
   finalizeOverwrite();
-  if (ctx.mode !== "tui") {
+  if (ctx.mode !== "tui" && !isChildSession(ctx)) {
     console.error(`[bifrost] ${message}`);
   }
   if (ctx.hasUI) ctx.ui.notify(message, type ?? "info");
@@ -159,7 +178,7 @@ export function uiBusy(ctx: ExtensionContext, message: string) {
       ctx.ui.setWorkingMessage(message);
       ctx.ui.setWorkingVisible(true);
     }
-  } else {
+  } else if (!isChildSession(ctx)) {
     console.error(`[bifrost] ${message}`);
   }
 }
@@ -174,7 +193,7 @@ async function uiResult(ctx: ExtensionContext, title: string, lines: string[]): 
   if (isBifrostSilent(ctx)) return;
   finalizeOverwrite();
   if (await showBifrostResult(ctx, title, lines)) return;
-  if (ctx.mode !== "tui") {
+  if (ctx.mode !== "tui" && !isChildSession(ctx)) {
     for (const line of lines) console.error(`[bifrost] ${line}`);
   }
 }

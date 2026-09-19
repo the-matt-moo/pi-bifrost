@@ -57,7 +57,7 @@ import { ReliabilityStore } from "./reliability-store.js";
 import { isRetryableProviderLimit } from "./reliability.js";
 import { loadRuntimeState, runtimeStatePath, saveRuntimeState, DEFAULT_RUNTIME_STATE, type RuntimeModeState } from "./runtime-state.js";
 import { cleanupSessionState, scheduleSessionCleanup } from "./session-cleanup.js";
-import { createCommandRouter, getBifrostCommandCompletions, log, logOverwrite, uiBusy, uiDone, setBifrostSilent, syncBifrostModeStatus, clearBifrostWidgets, formatBifrostRouting, type BifrostState } from "./commands.js";
+import { createCommandRouter, getBifrostCommandCompletions, log, logOverwrite, uiBusy, uiDone, setBifrostSilent, syncBifrostModeStatus, clearBifrostWidgets, formatBifrostRouting, isChildSession, type BifrostState } from "./commands.js";
 import { setupDebug, debug, debugMeasure } from "./debug.js";
 import { parseInlineOverride } from "./inline-override.js";
 import {
@@ -558,7 +558,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     loadSessionRuntimeState(ctx.sessionManager?.getSessionId?.());
     state.thinkingLevel = pi.getThinkingLevel();
     lastSeenModel = modelKey(ctx.model);
-    setBifrostSilent(ctx, state.silent);
+    setBifrostSilent(ctx, state.silent || isChildSession(ctx));
     syncBifrostModeStatus(ctx, state);
     clearBifrostWidgets(ctx);
     void quotaStore.refreshIfStale(Date.now());
@@ -616,7 +616,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   });
 
   pi.on("agent_settled", async (_event, ctx) => {
-    setBifrostSilent(ctx, state.silent);
+    setBifrostSilent(ctx, state.silent || isChildSession(ctx));
     const settled = runtimeReliability.settle();
     if (!settled || !state.enabled || state.config.reliability?.enabled === false) return;
     // Policy A: failure logged, clean settle silent (trial-only success).
@@ -732,7 +732,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   });
 
   pi.on("model_select", async (_event, ctx) => {
-    setBifrostSilent(ctx, state.silent);
+    setBifrostSilent(ctx, state.silent || isChildSession(ctx));
     const selectedModel = modelKey(ctx.model);
     settlingModel = selectedModel;
     setTimeout(() => {
@@ -818,7 +818,8 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
   pi.on("input", async (event, ctx) => {
     activeContext = ctx;
-    setBifrostSilent(ctx, state.silent);
+    const isChild = isChildSession(ctx);
+    setBifrostSilent(ctx, state.silent || isChild);
     // Safety: clear any guard left unconsumed from the previous turn so it can't wedge.
     // The current turn's thinking_level_select has already been delivered by now.
     selfSettingThinkingLevel = undefined;
@@ -827,7 +828,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     clearBifrostWidgets(ctx);
     // Passive subagent observation — logged even when routing is disabled,
     // so child-session model usage stays visible in debug logs.
-    if (process.env.PI_SUBAGENT_RUN_ID) {
+    if (process.env.PI_SUBAGENT_RUN_ID || isChild) {
       debug("input", "subagent", {
         source: "PI-subagent",
         agent: process.env.PI_SUBAGENT_CHILD_AGENT,

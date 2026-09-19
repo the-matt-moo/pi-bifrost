@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createCommandRouter, currentBifrostModeState, getBifrostCommandCompletions, type BifrostState } from "../commands.ts";
+import { createCommandRouter, currentBifrostModeState, getBifrostCommandCompletions, isChildSession, isBifrostSilent, log, uiBusy, type BifrostState } from "../commands.ts";
 
 function makeCtx() {
   const calls: Array<{ kind: string; value?: unknown; title?: string; options?: string[]; lines?: string[]; factory?: unknown }> = [];
@@ -275,5 +275,31 @@ describe("bifrost command ui", () => {
     console.error = origError;
 
     assert(output.includes("openCircuits: 0"));
+  });
+
+  it("identifies child sessions and suppresses stderr logs", () => {
+    const childCtx = {
+      hasUI: false,
+      mode: "print",
+      sessionManager: {
+        getHeader: () => ({ type: "session", id: "child-1", timestamp: "", cwd: "", parentSession: "parent-1" }),
+        getSessionFile: () => "/path/to/tasks/child-1.jsonl",
+      },
+    };
+
+    assert.equal(isChildSession(childCtx as never), true);
+    assert.equal(isBifrostSilent(childCtx as never), true);
+
+    let output = "";
+    const origError = console.error;
+    console.error = (msg: string) => { output += msg + "\n"; };
+    try {
+      uiBusy(childCtx as never, "routing to model");
+      log(childCtx as never, "auto-pinned model");
+    } finally {
+      console.error = origError;
+    }
+
+    assert.equal(output, "");
   });
 });
