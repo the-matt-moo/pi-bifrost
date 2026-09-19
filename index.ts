@@ -343,7 +343,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       ? ctx.scopedModels.map(({ model }) => model)
       : ctx.modelRegistry.getAvailable();
     return pool
-      .filter((model) => guessTier(model) === inferredTier)
+      .filter((model) => guessTier(model, state.config.tierHeuristics) === inferredTier)
       .map(modelKey);
   }
 
@@ -861,7 +861,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const current = ctx.model;
       const quota = quotaStore.getSnapshot();
       if (current && isProviderQuotaExhausted(current, quota, state.config.quotaRouting, now)) {
-        const tier = guessTier(current);
+        const tier = guessTier(current, state.config.tierHeuristics);
         const pool = ctx.scopedModels && ctx.scopedModels.length > 0
           ? ctx.scopedModels.map(({ model }) => model)
           : ctx.modelRegistry.getAvailable();
@@ -872,6 +872,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
           quota,
           state.config.quotaRouting,
           now,
+          state.config.tierHeuristics,
         );
         if (replacement) {
           selfSelecting = true;
@@ -896,7 +897,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       }
 
       if (!forcedTier && !sessionContext.isClearlyUnrelated(promptText)) {
-        sessionContext.record(ctx.model ? guessTier(ctx.model) : (state.config.default ?? "general"), promptText);
+        sessionContext.record(ctx.model ? guessTier(ctx.model, state.config.tierHeuristics) : (state.config.default ?? "general"), promptText);
         debug("input", "bypass", { enabled: true, pinned: true });
         syncBifrostModeStatus(ctx, state);
         log(ctx, formatBifrostRouting("", modelKey(ctx.model), "", true));

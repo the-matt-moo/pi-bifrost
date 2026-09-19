@@ -80,6 +80,32 @@ describe("commands helpers", () => {
         assert(known.has(tier), `unexpected tier ${tier}`);
       }
     });
+
+    it("respects explicit model override", () => {
+      const m = makeModel("custom", "special-model", 0.1, 0.1);
+      assert.equal(guessTier(m, { modelTiers: { "custom/special-model": "frontier" } }), "frontier");
+    });
+
+    it("classifies parameter count <=14b as quick and >=70b as frontier", () => {
+      // Cost 1+1 = 2 (middling, which falls into general on cost alone)
+      const small = makeModel("meta-llama", "llama-3.1-8b-instruct", 1, 1);
+      const medium = makeModel("meta-llama", "llama-3.1-30b-instruct", 1, 1);
+      const large = makeModel("meta-llama", "llama-3.1-70b-instruct", 1, 1);
+      const huge = makeModel("qwen", "qwen3.8-2.4t-a95b", 1, 1);
+
+      assert.equal(guessTier(small), "quick");
+      assert.equal(guessTier(medium), "general");
+      assert.equal(guessTier(large), "frontier");
+      assert.equal(guessTier(huge), "frontier");
+    });
+
+    it("classifies architectural brand terms regardless of context or cost", () => {
+      const flash = makeModel("antigravity", "gemini-3.5-flash", 3, 3, 1000000);
+      const sonnet = makeModel("openrouter", "claude-3-7-sonnet", 0.1, 0.1, 8000);
+
+      assert.equal(guessTier(flash), "quick");
+      assert.equal(guessTier(sonnet), "frontier");
+    });
   });
 
   describe("DEFAULT_RULES", () => {

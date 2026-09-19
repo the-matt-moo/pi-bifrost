@@ -63,6 +63,29 @@ export interface KeysConfig {
   toggle?: string;
 }
 
+export interface TierHeuristicsConfig {
+  /** Maximum parameter count (in billions) classified as `quick`. Default: 14. */
+  quickParamCeiling?: number;
+  /** Minimum parameter count (in billions) classified as `frontier`. Default: 70. */
+  frontierParamThreshold?: number;
+  /** Regex pattern matching model IDs that should be classified as `quick`. */
+  quickPattern?: string;
+  /** Regex pattern matching model IDs that should be classified as `frontier`. */
+  frontierPattern?: string;
+  /** Token cost per 1M tokens ($) threshold for `frontier` tier. Default: 5. */
+  frontierCostThreshold?: number;
+  /** Token cost per 1M tokens ($) threshold below which is `quick` tier. Default: 1. */
+  quickCostThreshold?: number;
+  /** Context window size for subscription models to qualify as `frontier`. Default: 200000. */
+  subscriptionFrontierContext?: number;
+  /** Context window size for subscription models to qualify as `general`. Default: 64000. */
+  subscriptionGeneralContext?: number;
+  /** Context window size for free models to qualify as `general`. Default: 200000. */
+  freeGeneralContext?: number;
+  /** Explicit per-model tier overrides (e.g. `{"provider/model-id": "frontier"}`). */
+  modelTiers?: Record<string, BifrostTier>;
+}
+
 export interface BifrostConfig {
   enabled?: boolean;
   keys?: KeysConfig;
@@ -79,6 +102,7 @@ export interface BifrostConfig {
   discovery?: DiscoveryConfig;
   quotaRouting?: QuotaRoutingConfig;
   thinking?: ThinkingConfig;
+  tierHeuristics?: TierHeuristicsConfig;
   /** Categories that must not silently fall back to `default`/another
    *  category when their configured candidates are missing or unhealthy.
    *  Defaults to `["coding"]` when `coding` is a configured category. */
@@ -466,6 +490,7 @@ export function mergeConfig(
   merged.reliability = mergeObj(base.reliability, override.reliability);
   merged.discovery = mergeObj(base.discovery, override.discovery);
   merged.quotaRouting = mergeObj(base.quotaRouting, override.quotaRouting);
+  merged.tierHeuristics = mergeObj(base.tierHeuristics, override.tierHeuristics);
   return merged;
 }
 

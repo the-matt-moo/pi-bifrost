@@ -209,11 +209,13 @@ Bifrost automates model selection via a robust heuristic pipeline during initial
 
 ### 1. Initialization: Categorization & Ordering
 When you run `/bifrost init`, models are probed, fetched, and categorized automatically:
-- **Text Models (`guessTier`)**: Models are categorized by cost and billing class.
-  - Cost > $5/1M tokens → `frontier`
-  - Cost < $1/1M tokens → `quick`
-  - Everything else → `general`
+- **Text Models (`guessTier`)**: Models are categorized by explicit overrides, parameter counts, architecture patterns, cost, and context:
+  - `modelTiers` in `tierHeuristics` explicitly pins a model to a tier.
+  - Parameter size: $\le 14\text{B}$ → `quick`, $\ge 70\text{B}$ → `frontier`.
+  - Architecture patterns: lightweight indicators (`haiku`, `flash`, `mini`, `nano`, `lite`) → `quick`; frontier indicators (`opus`, `sonnet`, `pro`, `max`, `r1`, `o1/o3`) → `frontier`.
+  - Cost: > $5/1M tokens → `frontier`, < $1/1M tokens → `quick`, everything else → `general`.
   - *Subscription models* (Anthropic, Codex, Antigravity) use context-window heuristics instead of cost: ≥200k tokens = `frontier`, ≥64k = `general`, otherwise `quick`.
+  - All thresholds and patterns are configurable under `tierHeuristics` in `bifrost.json`.
   - `writing` is a routing-only tier (explain/docs/summarize tasks). It has no `guessTier` cost class; when unconfigured it uses `general`-tier candidates at runtime.
   - `coding` is also routing-only — `guessTier` never assigns it. `/bifrost init` never auto-populates `coding`; add `models.coding` patterns yourself with models you've approved for implementation/debugging/review work. `coding` is strict by default (`strictCategories`): if its candidates are missing or unhealthy, routing surfaces that instead of silently falling back to `general`/`default`.
 - **Intra-Tier Ordering (`sortTierModels`)**: Non-free models are sorted ascending by their **probe latency** (fastest first). Free models are sorted by their **OpenRouter collection rank**.

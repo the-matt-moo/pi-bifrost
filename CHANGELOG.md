@@ -2,6 +2,14 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.11.0 - 19-09-2026
+
+### Added
+- Configurable `tierHeuristics` in `bifrost.json` and `schema.json`: customizable thresholds for model tier classification (`frontierCostThreshold`, `quickCostThreshold`, `subscriptionFrontierContext`, `subscriptionGeneralContext`, `freeGeneralContext`, `quickParamCeiling`, `frontierParamThreshold`, `quickPattern`, `frontierPattern`, and explicit `modelTiers` mappings).
+- Parameter-count based tiering in `guessTier`: models with $\le 14\text{B}$ are classified as `quick`, and models with $\ge 70\text{B}$ as `frontier`, preventing naming and price discrepancies on open-weights models.
+- Upstream architectural regex patterns in `guessTier`: detects brand identifiers (e.g. `haiku`, `flash`, `mini`, `opus`, `sonnet`, `pro`, `max`, `r1`) to prevent context-inflated light models from falsely escalating to `frontier` and price-deflated models from falling to `quick`.
+- Explicit per-model override support (`tierHeuristics.modelTiers`) allowing users to pin specific models to tiers without relying on cost/context heuristics.
+
 ## 4.10.1 - 19-09-2026
 
 ### Fixed

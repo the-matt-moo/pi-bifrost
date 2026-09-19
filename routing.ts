@@ -485,13 +485,14 @@ export function selectComparableAvailableModel(
   quota: QuotaSnapshot | undefined,
   quotaConfig: QuotaRoutingConfig | undefined,
   now = Date.now(),
+  heuristics?: TierHeuristicsConfig,
 ): Model<Api> | undefined {
   if (!isProviderQuotaExhausted(current, quota, quotaConfig, now) || !quota) return undefined;
   const reserve = quotaConfig?.reservePercent ?? 0.03;
-  const tier = guessTier(current);
+  const tier = guessTier(current, heuristics);
   const available = candidates.filter((model) =>
     model.provider !== current.provider &&
-    guessTier(model) === tier &&
+    guessTier(model, heuristics) === tier &&
     (quota.byProvider[model.provider]?.weeklyRemainingFraction ?? -1) > reserve
   );
   return selectModel(available, strategy, quota, quotaConfig, now);
@@ -835,41 +836,107 @@ export function classify(text: string, rules: readonly RouteRule[]): string | un
 
 // ── Tier heuristics ───────────────────────────────────────────
 
-/**
- * Tier assignment during `/bifrost init`, using billing class plus
- * cost/context signals. Listed cost is meaningless for subscription
- * providers (Codex/Antigravity), so those are tiered by context window
- * instead. Free models (cost <= 0) have no cost signal either, so they
- * are also tiered by context window. Everything else (paid) keeps the
- * original cost-threshold behavior. No name-based guessing — naming
- * conventions change; billing class + cost/context is the stable signal.
- */
-const FRONTIER_COST_THRESHOLD = 5; // $/1M tokens (input + output)
-const QUICK_COST_THRESHOLD = 1;
-const SUBSCRIPTION_FRONTIER_CONTEXT = 200_000;
-const SUBSCRIPTION_GENERAL_CONTEXT = 64_000;
-const FREE_GENERAL_CONTEXT = 200_000;
+export interface TierHeuristicsConfig {
+  quickParamCeiling?: number;
+  frontierParamThreshold?: number;
+  quickPattern?: string;
+  frontierPattern?: string;
+  frontierCostThreshold?: number;
+  quickCostThreshold?: number;
+  subscriptionFrontierContext?: number;
+  subscriptionGeneralContext?: number;
+  freeGeneralContext?: number;
+  modelTiers?: Record<string, BifrostTier>;
+}
+
+const DEFAULT_FRONTIER_COST_THRESHOLD = 5; // $/1M tokens (input + output)
+const DEFAULT_QUICK_COST_THRESHOLD = 1;
+const DEFAULT_SUBSCRIPTION_FRONTIER_CONTEXT = 200_000;
+const DEFAULT_SUBSCRIPTION_GENERAL_CONTEXT = 64_000;
+const DEFAULT_FREE_GENERAL_CONTEXT = 200_000;
+
+const DEFAULT_QUICK_PARAM_CEILING = 14;
+const DEFAULT_FRONTIER_PARAM_THRESHOLD = 70;
+
+const DEFAULT_QUICK_PATTERN = "\\b(haiku|flash|mini|nano|lite|small|edge)\\b";
+const DEFAULT_FRONTIER_PATTERN = "\\b(o[134]|opus|sonnet|gpt-[456]|gemini-.*-pro|deepseek-(v[34]|r1)|qwen-(max|plus))\\b";
 
 export type BifrostTier = "frontier" | "general" | "writing" | "quick";
 
-/** Assign a model to a tier based on billing class, cost, and context window. */
+/** Extracts numerical parameter count (in billions) from a model ID, e.g. 70b -> 70, 2.4t -> 2400. */
+export function extractParamCount(id: string): number | undefined {
+  const match = id.toLowerCase().match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)?)\s*([bt])(?:[^a-z0-9]|$)/);
+  if (!match) return undefined;
+  const val = parseFloat(match[1]);
+  if (isNaN(val)) return undefined;
+  const unit = match[2];
+  return unit === "t" ? val * 1000 : val;
+}
+
+/** Assign a model to a tier based on explicit overrides, parameter counts, architecture patterns, and cost/context heuristics. */
 export function guessTier(
   model: Model<Api>,
+  heuristics?: TierHeuristicsConfig,
 ): BifrostTier {
+  const fullKey = modelKey(model);
+  const id = model.id.toLowerCase();
+
+  // 1. Explicit model override
+  if (heuristics?.modelTiers) {
+    if (heuristics.modelTiers[fullKey]) return heuristics.modelTiers[fullKey];
+    if (heuristics.modelTiers[model.id]) return heuristics.modelTiers[model.id];
+  }
+
+  // 2. Numerical parameter extraction (>= and <= logic)
+  const paramCount = extractParamCount(model.id);
+  const quickCeiling = heuristics?.quickParamCeiling ?? DEFAULT_QUICK_PARAM_CEILING;
+  const frontierThreshold = heuristics?.frontierParamThreshold ?? DEFAULT_FRONTIER_PARAM_THRESHOLD;
+
+  if (paramCount !== undefined) {
+    if (paramCount <= quickCeiling) return "quick";
+    if (paramCount >= frontierThreshold) return "frontier";
+  }
+
+  // 3. Name-based architecture / family patterns
+  const quickRegexStr = heuristics?.quickPattern ?? DEFAULT_QUICK_PATTERN;
+  if (quickRegexStr) {
+    try {
+      if (new RegExp(quickRegexStr, "i").test(id)) return "quick";
+    } catch (err) {
+      console.error(`[bifrost] invalid quickPattern regex "${quickRegexStr}": ${err}`);
+    }
+  }
+
+  const frontierRegexStr = heuristics?.frontierPattern ?? DEFAULT_FRONTIER_PATTERN;
+  if (frontierRegexStr) {
+    try {
+      if (new RegExp(frontierRegexStr, "i").test(id)) return "frontier";
+    } catch (err) {
+      console.error(`[bifrost] invalid frontierPattern regex "${frontierRegexStr}": ${err}`);
+    }
+  }
+
+  // 4. Cost and Context heuristics
   const contextWindow = model.contextWindow ?? 0;
   const cost = model.cost ? modelCost(model) : 0;
   const cls: BillingClass = model.cost ? billingClass(model) : "free";
 
+  const subFrontierContext = heuristics?.subscriptionFrontierContext ?? DEFAULT_SUBSCRIPTION_FRONTIER_CONTEXT;
+  const subGeneralContext = heuristics?.subscriptionGeneralContext ?? DEFAULT_SUBSCRIPTION_GENERAL_CONTEXT;
+  const freeGenContext = heuristics?.freeGeneralContext ?? DEFAULT_FREE_GENERAL_CONTEXT;
+  const frontierCost = heuristics?.frontierCostThreshold ?? DEFAULT_FRONTIER_COST_THRESHOLD;
+  const quickCost = heuristics?.quickCostThreshold ?? DEFAULT_QUICK_COST_THRESHOLD;
+
   if (cls === "subscription") {
-    if (contextWindow >= SUBSCRIPTION_FRONTIER_CONTEXT) return "frontier";
-    if (contextWindow >= SUBSCRIPTION_GENERAL_CONTEXT) return "general";
+    if (contextWindow >= subFrontierContext) return "frontier";
+    if (contextWindow >= subGeneralContext) return "general";
     return "quick";
   }
   if (cls === "free") {
-    if (contextWindow >= FREE_GENERAL_CONTEXT) return "general";
+    if (contextWindow >= freeGenContext) return "general";
     return "quick";
   }
-  if (cost > FRONTIER_COST_THRESHOLD) return "frontier";
-  if (cost < QUICK_COST_THRESHOLD) return "quick";
+  if (cost > frontierCost) return "frontier";
+  if (cost < quickCost) return "quick";
   return "general";
 }

@@ -133,6 +133,9 @@
     "quotaRouting": {
       "$ref": "#/definitions/QuotaRoutingConfig"
     },
+    "tierHeuristics": {
+      "$ref": "#/definitions/TierHeuristicsConfig"
+    },
     "strictCategories": {
       "type": "array",
       "items": { "type": "string" },
@@ -499,6 +502,64 @@
         "path": {
           "type": "string",
           "description": "Custom path for the debug log file. Default: .pi/bifrost-debug.jsonl"
+        }
+      }
+    },
+    "TierHeuristicsConfig": {
+      "type": "object",
+      "description": "Configurable criteria and thresholds used by guessTier to classify models into tiers (quick, general, frontier).",
+      "additionalProperties": false,
+      "properties": {
+        "quickParamCeiling": {
+          "type": "number",
+          "description": "Maximum parameter count (in billions) classified as 'quick'. Models <= this value are assigned to 'quick'. Default: 14.",
+          "default": 14
+        },
+        "frontierParamThreshold": {
+          "type": "number",
+          "description": "Minimum parameter count (in billions) classified as 'frontier'. Models >= this value are assigned to 'frontier'. Default: 70.",
+          "default": 70
+        },
+        "quickPattern": {
+          "type": "string",
+          "description": "Regex pattern matching model IDs that should be assigned to 'quick' tier regardless of cost or context window."
+        },
+        "frontierPattern": {
+          "type": "string",
+          "description": "Regex pattern matching model IDs that should be assigned to 'frontier' tier regardless of cost or context window."
+        },
+        "frontierCostThreshold": {
+          "type": "number",
+          "description": "Token cost per 1M tokens ($) above which paid models are classified as 'frontier'. Default: 5.",
+          "default": 5
+        },
+        "quickCostThreshold": {
+          "type": "number",
+          "description": "Token cost per 1M tokens ($) below which paid models are classified as 'quick'. Default: 1.",
+          "default": 1
+        },
+        "subscriptionFrontierContext": {
+          "type": "integer",
+          "description": "Context window size threshold above which subscription models are classified as 'frontier'. Default: 200000.",
+          "default": 200000
+        },
+        "subscriptionGeneralContext": {
+          "type": "integer",
+          "description": "Context window size threshold above which subscription models are classified as 'general'. Default: 64000.",
+          "default": 64000
+        },
+        "freeGeneralContext": {
+          "type": "integer",
+          "description": "Context window size threshold above which free models are classified as 'general'. Default: 200000.",
+          "default": 200000
+        },
+        "modelTiers": {
+          "type": "object",
+          "description": "Explicit per-model tier mappings (e.g. {'provider/model-id': 'frontier'}). Overrides all heuristics.",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["frontier", "general", "writing", "quick"]
+          }
         }
       }
     }
