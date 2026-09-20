@@ -2,6 +2,14 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.11.3 - 20-09-2026
+
+### Changed
+- Require Pi >= 0.86.0 (uses the 0.86-era `normalizeContext()` API); raise peer floors to `^0.86.0`, pin dev baseline at 0.86.1, and require Node >= 22.19.0.
+
+### Fixed
+- Import the missing `BifrostTier` type in `config.ts` (typecheck with Pi 0.86.x).
+
 ## 4.11.2 - 20-09-2026
 
 ### Fixed

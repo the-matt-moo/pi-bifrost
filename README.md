@@ -140,6 +140,8 @@ type ClassificationSource = "cache" | "classifier" | "regex" | "complexity" | "i
 
 ## Install
 
+> **Requires Pi >= 0.86.0** (uses the 0.86-era normalized-context API).
+
 From npm (scoped):
 
 ```bash

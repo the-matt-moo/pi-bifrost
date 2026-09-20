@@ -1,7 +1,7 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { readJsonFile } from "./storage.ts";
-import type { RoutingStrategy, RouteRule } from "./routing.ts";
+import type { RoutingStrategy, RouteRule, BifrostTier } from "./routing.ts";
 import type { CacheOptions } from "./cache.ts";
 import type { DebugConfig } from "./debug.ts";
 import type { ReliabilityConfig } from "./reliability.ts";
