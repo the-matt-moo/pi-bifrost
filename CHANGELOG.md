@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.11.2 - 20-09-2026
+
+### Fixed
+- Retry transient `MALFORMED_FUNCTION_CALL` provider failures and use a short circuit cooldown for them.
+
 ## 4.11.1 - 19-09-2026
 
 ### Fixed

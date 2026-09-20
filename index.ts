@@ -54,7 +54,7 @@ import {
 } from "./routing.js";
 import { QuotaStore } from "./quota.js";
 import { ReliabilityStore } from "./reliability-store.js";
-import { isRetryableProviderLimit } from "./reliability.js";
+import { isRetryableProviderError, isRetryableProviderLimit } from "./reliability.js";
 import { loadRuntimeState, runtimeStatePath, saveRuntimeState, DEFAULT_RUNTIME_STATE, type RuntimeModeState } from "./runtime-state.js";
 import { cleanupSessionState, scheduleSessionCleanup } from "./session-cleanup.js";
 import { createCommandRouter, getBifrostCommandCompletions, log, logOverwrite, uiBusy, uiDone, setBifrostSilent, syncBifrostModeStatus, clearBifrostWidgets, formatBifrostRouting, isChildSession, type BifrostState } from "./commands.js";
@@ -627,25 +627,28 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     const httpMatch = settled.reason.match(/\b([45]\d{2})\b/);
     const detail = httpMatch ? `HTTP ${httpMatch[1]}; ` : "";
     const retry = settled.retry;
+    const retryableLimit = isRetryableProviderLimit(settled.reason);
+    const retryableProviderError = isRetryableProviderError(settled.reason);
+    const retryableFailure = retryableLimit || retryableProviderError;
     const autoRetry = state.config.reliability?.autoRetry ?? true;
     const maxAutoRetries = state.config.reliability?.maxAutoRetries ?? 2;
     if (
       !autoRetry ||
       !retry ||
       !settled.replaySafe ||
-      !isRetryableProviderLimit(settled.reason) ||
+      !retryableFailure ||
       retry.autoRetryCount >= maxAutoRetries
     ) {
-      // Auto-unpin on retryable provider errors (429, rate limit) so next prompt
-      // routes to a healthy model instead of hitting the same wall.
-      if (state.pinned && isRetryableProviderLimit(settled.reason)) {
+      // Auto-unpin on retryable provider limits so next prompt routes to a
+      // healthy model instead of hitting the same wall.
+      if (state.pinned && retryableLimit) {
         state.pinned = false;
         state.saveModeState();
         syncBifrostModeStatus(ctx, state);
         log(ctx, `Bifrost: ${settled.model} is rate-limited (${detail}circuit opened); auto-unpinned to allow routing to a healthy model.`, "warning");
         return;
       }
-      const why = isRetryableProviderLimit(settled.reason) && !settled.replaySafe
+      const why = retryableFailure && !settled.replaySafe
         ? " automatic retry skipped because the failed turn produced output or tool results."
         : " next prompt routes to the next healthy model in its tier.";
       log(ctx, `Bifrost: provider failure for ${settled.model} (${detail}circuit opened);${why}`, "warning");

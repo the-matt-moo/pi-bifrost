@@ -7,6 +7,7 @@ import {
   DEFAULT_RELIABILITY,
   emptyReliabilityState,
   getCircuitState,
+  isRetryableProviderError,
   isRetryableProviderLimit,
   isAccountLevelLimit,
   parseCooldownFromReason,
@@ -36,6 +37,12 @@ describe("reliability", () => {
       assert.equal(isRetryableProviderLimit(reason), true, reason);
     }
     assert.equal(isRetryableProviderLimit("500: provider failed after partial output"), false);
+  });
+
+  it("recognizes retryable malformed tool-call failures", () => {
+    assert.equal(isRetryableProviderError("MALFORMED_FUNCTION_CALL"), true);
+    assert.equal(isRetryableProviderError("provider request failed"), false);
+    assert.equal(isRetryableProviderLimit("MALFORMED_FUNCTION_CALL"), false);
   });
 
   it("opens circuit after threshold failures within window", () => {

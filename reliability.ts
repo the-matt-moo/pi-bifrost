@@ -146,8 +146,13 @@ export function isRetryableProviderLimit(reason: string): boolean {
   return /\b429\b|\b50[234]\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)|quota_exceeded|rate_limit|insufficient.*(?:quota|balance|credit)|temporarily overloaded|overloaded|service unavailable/i.test(reason);
 }
 
+/** Transient provider/model failures that are safe to retry without treating them as limits. */
+export function isRetryableProviderError(reason: string): boolean {
+  return /malformed[_ ]function[_ ]call/i.test(reason);
+}
+
 function isTransientProviderLimit(reason: string): boolean {
-  return isRetryableProviderLimit(reason);
+  return isRetryableProviderLimit(reason) || isRetryableProviderError(reason);
 }
 
 function shouldOpenImmediately(source: string, reason: string): boolean {
