@@ -4,7 +4,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { normalizeContext, type Api, type Model } from "@earendil-works/pi-ai";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -178,10 +178,10 @@ async function probeOne(
       }
       const stream = provider.streamSimple(
         model,
-        {
+        normalizeContext({
           systemPrompt: "Reply only with 2.",
           messages: [{ role: "user", content: PROBE_PROMPT, timestamp: Date.now() }],
-        },
+        }),
         streamOptions,
       );
       const response = await stream.result();

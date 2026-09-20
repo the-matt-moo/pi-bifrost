@@ -1,5 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import { normalizeContext, type Api, type Model } from "@earendil-works/pi-ai";
 import { spawn } from "node:child_process";
 import { debug } from "./debug.ts";
 import { parseClassifierStderr, formatDiagnostic } from "./diagnostics.ts";
@@ -358,10 +358,10 @@ async function classifyWithDirectHttp(
 
       const stream = provider.streamSimple(
         classifierModel.model,
-        {
+        normalizeContext({
           systemPrompt,
           messages: [{ role: "user", content: userPrompt, timestamp: Date.now() }],
-        },
+        }),
         {
           maxTokens,
           temperature,

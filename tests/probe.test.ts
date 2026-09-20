@@ -29,11 +29,14 @@ describe("probe transport", () => {
         cost: { input: 0.75, output: 4.5 },
         baseUrl: "https://example.invalid/v1",
       };
+      let streamContext: { messages: Array<{ role: string; content: string }> } | undefined;
       const ctx = {
         modelRegistry: {
           getAvailable: () => [model],
           getProvider: () => ({
-            streamSimple: () => ({
+            streamSimple: (_model: unknown, context: typeof streamContext) => (
+              streamContext = context,
+              {
               result: async () => ({
                 role: "assistant",
                 api: "openai-codex-responses",
@@ -60,6 +63,9 @@ describe("probe transport", () => {
       const result = await runProbe(ctx);
       assert.equal(result.results[0]?.status, "ok");
       assert.equal(result.results[0]?.model, "gpt-5.4-mini");
+      assert.equal(streamContext?.messages[0]?.role, "system");
+      assert.equal(streamContext?.messages[0]?.content, "Reply only with 2.");
+      assert.equal(streamContext?.messages[1]?.role, "user");
     });
   });
 
