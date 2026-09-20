@@ -353,10 +353,12 @@ async function classifyWithDirectHttp(
     try {
       const provider = ctx.modelRegistry.getProvider(classifierModel.model.provider);
       if (!provider) return { attempted: false, outcome: { status: "failed" } };
+      // Pre-check auth so an unconfigured provider keeps the attempted:false
+      // semantics (subprocess fallback) instead of surfacing as a failed attempt.
       const auth = await ctx.modelRegistry.getProviderAuth(classifierModel.model.provider);
       if (!auth) return { attempted: false, outcome: { status: "failed" } };
 
-      const stream = provider.streamSimple(
+      const stream = ctx.modelRegistry.streamSimple(
         classifierModel.model,
         normalizeContext({
           systemPrompt,
@@ -367,9 +369,6 @@ async function classifyWithDirectHttp(
           temperature,
           signal: options.signal ?? ctx.signal,
           cacheRetention: "none",
-          apiKey: auth.auth.apiKey,
-          headers: auth.auth.headers,
-          env: auth.env,
         },
       );
       try {

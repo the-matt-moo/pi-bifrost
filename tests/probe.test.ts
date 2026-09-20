@@ -33,30 +33,28 @@ describe("probe transport", () => {
       const ctx = {
         modelRegistry: {
           getAvailable: () => [model],
-          getProvider: () => ({
-            streamSimple: (_model: unknown, context: typeof streamContext) => (
-              streamContext = context,
-              {
-              result: async () => ({
-                role: "assistant",
-                api: "openai-codex-responses",
-                provider: "openai-codex",
-                model: "gpt-5.4-mini",
-                content: [{ type: "text", text: "2" }],
-                usage: {
-                  input: 1,
-                  output: 1,
-                  cacheRead: 0,
-                  cacheWrite: 0,
-                  totalTokens: 2,
-                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-                },
-                stopReason: "stop",
-                timestamp: Date.now(),
-              }),
+          getProvider: () => ({}),
+          streamSimple: (_model: unknown, context: typeof streamContext) => (
+            streamContext = context,
+            {
+            result: async () => ({
+              role: "assistant",
+              api: "openai-codex-responses",
+              provider: "openai-codex",
+              model: "gpt-5.4-mini",
+              content: [{ type: "text", text: "2" }],
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
             }),
           }),
-          getProviderAuth: async () => ({ auth: { apiKey: "key" } }),
         },
       } as never;
 
@@ -81,28 +79,26 @@ describe("probe transport", () => {
       const ctx = {
         modelRegistry: {
           getAvailable: () => [model],
-          getProvider: () => ({
-            streamSimple: () => ({
-              result: async () => ({
-                role: "assistant",
-                api: "openai-codex-responses",
-                provider: "openai-codex",
-                model: "gpt-5.4-mini",
-                content: [],
-                usage: {
-                  input: 1,
-                  output: 1,
-                  cacheRead: 0,
-                  cacheWrite: 0,
-                  totalTokens: 2,
-                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-                },
-                stopReason: "stop",
-                timestamp: Date.now(),
-              }),
+          getProvider: () => ({}),
+          streamSimple: () => ({
+            result: async () => ({
+              role: "assistant",
+              api: "openai-codex-responses",
+              provider: "openai-codex",
+              model: "gpt-5.4-mini",
+              content: [],
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "stop",
+              timestamp: Date.now(),
             }),
           }),
-          getProviderAuth: async () => ({ auth: { apiKey: "key" } }),
         },
       } as never;
 
@@ -124,29 +120,27 @@ describe("probe transport", () => {
       const ctx = {
         modelRegistry: {
           getAvailable: () => [model],
-          getProvider: () => ({
-            streamSimple: () => ({
-              result: async () => ({
-                role: "assistant",
-                api: "openai-codex-responses",
-                provider: "openai-codex",
-                model: "gpt-5.4-mini",
-                content: [],
-                usage: {
-                  input: 1,
-                  output: 1,
-                  cacheRead: 0,
-                  cacheWrite: 0,
-                  totalTokens: 2,
-                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-                },
-                stopReason: "error",
-                errorMessage: "empty response",
-                timestamp: Date.now(),
-              }),
+          getProvider: () => ({}),
+          streamSimple: () => ({
+            result: async () => ({
+              role: "assistant",
+              api: "openai-codex-responses",
+              provider: "openai-codex",
+              model: "gpt-5.4-mini",
+              content: [],
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "error",
+              errorMessage: "empty response",
+              timestamp: Date.now(),
             }),
           }),
-          getProviderAuth: async () => ({ auth: { apiKey: "key" } }),
         },
       } as never;
 
@@ -171,19 +165,17 @@ describe("probe transport", () => {
       const ctx = {
         modelRegistry: {
           getAvailable: () => available,
-          getProvider: () => ({
-            streamSimple: () => ({
-              result: async () => {
-                calls++;
-                return {
-                  content: [{ type: "text", text: "2" }],
-                  usage: { totalTokens: 2 },
-                  stopReason: "stop",
-                };
-              },
-            }),
+          getProvider: () => ({}),
+          streamSimple: () => ({
+            result: async () => {
+              calls++;
+              return {
+                content: [{ type: "text", text: "2" }],
+                usage: { totalTokens: 2 },
+                stopReason: "stop",
+              };
+            },
           }),
-          getProviderAuth: async () => ({ auth: { apiKey: "key" } }),
         },
       } as never;
 

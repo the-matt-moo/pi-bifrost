@@ -153,20 +153,11 @@ async function probeOne(
         base.error = `unknown provider: ${model.provider}`;
         return base;
       }
-      const auth = await ctx.modelRegistry.getProviderAuth(model.provider);
-      if (!auth) {
-        base.status = "error";
-        base.error = "auth unavailable";
-        return base;
-      }
 
       const streamOptions: any = {
         maxTokens: PROBE_MAX_TOKENS,
         signal: controller.signal,
         cacheRetention: "none",
-        apiKey: auth.auth.apiKey,
-        headers: auth.auth.headers,
-        env: auth.env,
       };
       // Models requiring thinking mode need a minimum budget to avoid "Budget 0 is invalid" error
       if (model.reasoning) {
@@ -176,7 +167,7 @@ async function probeOne(
           streamOptions.thinkingBudgetTokens = 1024;
         }
       }
-      const stream = provider.streamSimple(
+      const stream = ctx.modelRegistry.streamSimple(
         model,
         normalizeContext({
           systemPrompt: "Reply only with 2.",

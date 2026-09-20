@@ -42,6 +42,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Multi-turn routing | Each prompt classified independently | Session momentum: 2+ same-tier classifications carry forward; topic-change detection resets momentum |
 | Routing latency | Sequential: cache miss → LLM → regex | Stale-while-revalidate registry updates, bounded classifier attempts, failure cooldowns, indexed cache lookup, and complexity short-circuits keep prompt routing off slow maintenance paths |
 | Classifier confidence | Tier-only LLM output | `classifier.confidenceThreshold` requires an explicit score and rejects missing/low-confidence picks so routing falls through to regex/default without retrying another classifier |
+| Classifier auth | Manual provider auth resolution | Classifier and probe streams run through `ctx.modelRegistry.streamSimple()`, so provider credentials resolve through the host registry (OAuth, env, stored keys) instead of a bespoke auth lookup |
 | Self-correction | Static cache, no feedback | Demotion tracking on manual overrides; cache entries auto-escalate tier after 3 demotions |
 | Cold start | Empty cache → every prompt hits LLM | Cache warm-start seeds entries from regex rules on first use |
 | Category taxonomy | `quick`/`general`/`frontier` | Adds a dedicated `coding` category (implementation, debugging, refactoring, tests, code review, codebase investigation, typing/error handling, API integration); `general` is now a non-specialized catch-all with no development regex rules of its own |

@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.11.4 - 20-09-2026
+
+### Changed
+- Route classifier and probe streams through `ctx.modelRegistry.streamSimple()` (auth resolved internally) instead of resolving auth manually and calling `provider.streamSimple()`.
+
 ## 4.11.3 - 20-09-2026
 
 ### Changed
