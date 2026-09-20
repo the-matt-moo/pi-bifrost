@@ -11,3 +11,4 @@ screenshots/
 .plan/
 docs/adr/*
 graphify-out/.graphify_root
+undefined/
