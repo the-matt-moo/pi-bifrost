@@ -1,6 +1,6 @@
 {
   "name": "@tenchi4u/pi-bifrost",
-  "version": "4.11.4",
+  "version": "4.11.5",
   "description": "Query-aware model routing extension for Pi. Select models by task complexity, cost, context, speed, or configured order.",
   "type": "module",
   "license": "MIT",
@@ -50,8 +50,8 @@
     "@earendil-works/pi-coding-agent": ">=0.86.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.86.1",
-    "@earendil-works/pi-coding-agent": "0.86.1",
+    "@earendil-works/pi-ai": "0.87.0",
+    "@earendil-works/pi-coding-agent": "0.87.0",
     "@types/node": "^26.1.1",
     "agent-tui": "^1.1.0",
     "jiti": "^2.7.0",

@@ -2,6 +2,12 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.11.5 - 26-09-2026
+
+### Fixed
+- Render multi-line result content (e.g. reconcile diff JSON) as separate wrapped lines instead of a single blob; expand tabs to avoid horizontal overflow.
+- Re-read terminal rows per render so the viewer no longer clips after a terminal resize.
+
 ## 4.11.4 - 20-09-2026
 
 ### Changed

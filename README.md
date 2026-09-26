@@ -271,6 +271,10 @@ artifacts (cache, probe results, reliability, debug log) live under
 `~/.pi/agent/`, while session toggles (enabled/classifier/thinking/silent)
 are stored per Pi session.
 
+Inline results (e.g. `/bifrost reconcile` config diff) render in a scrollable
+viewer that splits multi-line content and expands tabs; the visible height
+tracks the terminal on resize. `esc` closes, `↑↓`/`jk` scroll.
+
 Minimal config after `init`:
 
 ```json

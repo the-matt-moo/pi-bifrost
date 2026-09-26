@@ -27,4 +27,19 @@ describe("result viewer", () => {
     assert.equal(isEscapeKey("\x1b[27;1;27~"), true);
     assert.equal(isEscapeKey("j"), false);
   });
+
+  it("splits multiline strings within an item into separate lines", () => {
+    const raw = "proposed config:\n{\n  \"models\": {\n    \"heavy\": [\n      \"anthropic/claude\"\n    ]\n  }\n}";
+    const lines = wrapResultLines([raw], 40);
+
+    assert(lines.every((line) => !line.includes("\n") && !line.includes("\r")));
+    assert.equal(lines[0], "proposed config:");
+    assert.equal(lines[1], "{");
+    assert.equal(lines[2], "  \"models\": {");
+  });
+
+  it("expands tabs to avoid horizontal overflow", () => {
+    const lines = wrapResultLines(["\t+ model -> tier"], 40);
+    assert.equal(lines[0], "  + model -> tier");
+  });
 });

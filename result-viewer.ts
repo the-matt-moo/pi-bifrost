@@ -5,7 +5,6 @@ type ResultTheme = Pick<ExtensionContext["ui"]["theme"], "fg">;
 
 /** Overhead lines: top border + title + scroll info + bottom border. */
 const CHROME_LINES = 4;
-const MIN_VISIBLE_LINES = 5;
 const FALLBACK_VISIBLE_LINES = 10;
 
 /** Match legacy Esc plus Kitty CSI-u and xterm modifyOtherKeys encodings. */
@@ -19,14 +18,23 @@ export function wrapResultLines(lines: readonly string[], width: number): string
   const safeWidth = Math.max(1, width);
   const wrapped: string[] = [];
 
-  for (const line of lines) {
-    if (!line) {
+  for (const rawLine of lines) {
+    if (!rawLine) {
       wrapped.push("");
       continue;
     }
 
-    for (let offset = 0; offset < line.length; offset += safeWidth) {
-      wrapped.push(line.slice(offset, offset + safeWidth));
+    const sublines = rawLine.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    for (const subline of sublines) {
+      if (!subline) {
+        wrapped.push("");
+        continue;
+      }
+
+      const expanded = subline.replace(/\t/g, "  ");
+      for (let offset = 0; offset < expanded.length; offset += safeWidth) {
+        wrapped.push(expanded.slice(offset, offset + safeWidth));
+      }
     }
   }
 
@@ -36,13 +44,13 @@ export function wrapResultLines(lines: readonly string[], width: number): string
 class ResultViewer {
   private scrollOffset = 0;
   private maxOffset = 0;
-  private readonly visibleLines: number;
   private readonly title: string;
   private readonly lines: readonly string[];
   private readonly theme: ResultTheme;
   private readonly done: () => void;
   private readonly requestRender: () => void;
   private readonly keybindings: KeybindingsManager | undefined;
+  private readonly termRows?: number | (() => number);
 
   constructor(
     title: string,
@@ -51,7 +59,7 @@ class ResultViewer {
     done: () => void,
     requestRender: () => void,
     keybindings?: KeybindingsManager,
-    termRows?: number,
+    termRows?: number | (() => number),
   ) {
     this.title = title;
     this.lines = lines;
@@ -59,20 +67,17 @@ class ResultViewer {
     this.done = done;
     this.requestRender = requestRender;
     this.keybindings = keybindings;
+    this.termRows = termRows;
+  }
 
-    // Match the overlay framework's maxHeight calculation exactly so the
-    // rendered output is never clipped.  The framework does:
-    //   availHeight = termRows - marginTop - marginBottom   (margin=1 → termRows-2)
-    //   maxHeight   = min(round(fraction * termRows), availHeight)
-    // We use 90% of terminal height as the overlay maxHeight, then subtract
-    // our 4 chrome lines (top border, title, scroll info, bottom border).
-    if (termRows && termRows > 0) {
-      const availHeight = termRows - 2;            // margin 1 top + 1 bottom
-      const maxHeight = Math.min(Math.round(termRows * 0.9), availHeight);
-      this.visibleLines = Math.max(MIN_VISIBLE_LINES, maxHeight - CHROME_LINES);
-    } else {
-      this.visibleLines = FALLBACK_VISIBLE_LINES;
+  private getVisibleLines(): number {
+    const rows = typeof this.termRows === "function" ? this.termRows() : this.termRows;
+    if (rows && rows > 0) {
+      const availHeight = Math.max(1, rows - 2); // margin 1 top + 1 bottom
+      const maxHeight = Math.max(1, Math.min(Math.floor(rows * 0.9), availHeight));
+      return Math.max(1, maxHeight - CHROME_LINES);
     }
+    return FALLBACK_VISIBLE_LINES;
   }
 
   handleInput(data: string): void {
@@ -96,18 +101,20 @@ class ResultViewer {
   }
 
   render(width: number): string[] {
+    const visibleLines = this.getVisibleLines();
     const contentWidth = Math.max(1, width - 4);
     const lines = wrapResultLines(this.lines, contentWidth);
-    this.maxOffset = Math.max(0, lines.length - this.visibleLines);
+    this.maxOffset = Math.max(0, lines.length - visibleLines);
     this.scrollOffset = Math.min(this.scrollOffset, this.maxOffset);
-    const visible = lines.slice(this.scrollOffset, this.scrollOffset + this.visibleLines);
+    const visible = lines.slice(this.scrollOffset, this.scrollOffset + visibleLines);
     const border = (text: string) => this.theme.fg("border", text);
     const row = (text: string, color: "text" | "accent" | "dim" = "text") => {
-      const padded = text.slice(0, contentWidth).padEnd(contentWidth);
+      const clean = text.replace(/[\r\n\t]/g, " ");
+      const padded = clean.slice(0, contentWidth).padEnd(contentWidth);
       return `${border("│")} ${this.theme.fg(color, padded)} ${border("│")}`;
     };
-    const title = this.title.slice(0, contentWidth);
-    const scroll = lines.length > this.visibleLines
+    const title = this.title.replace(/[\r\n]/g, " ").slice(0, contentWidth);
+    const scroll = lines.length > visibleLines
       ? `${this.scrollOffset + 1}-${this.scrollOffset + visible.length}/${lines.length} · ↑↓/jk scroll · esc close`
       : "esc close";
 
@@ -116,7 +123,7 @@ class ResultViewer {
       row(title, "accent"),
       row(scroll, "dim"),
       ...visible.map((line) => row(line)),
-      ...Array.from({ length: this.visibleLines - visible.length }, () => row("")),
+      ...Array.from({ length: Math.max(0, visibleLines - visible.length) }, () => row("")),
       border(`╰${"─".repeat(contentWidth + 2)}╯`),
     ];
   }
@@ -136,7 +143,7 @@ export async function showBifrostResult(
 
   await ctx.ui.custom<void>(
     (tui, theme, keybindings, done) =>
-      new ResultViewer(title, lines, theme, done, () => tui.requestRender(), keybindings, tui.terminal.rows),
+      new ResultViewer(title, lines, theme, done, () => tui.requestRender(), keybindings, () => tui.terminal.rows),
     {
       overlay: true,
       overlayOptions: {

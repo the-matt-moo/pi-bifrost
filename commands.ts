@@ -723,7 +723,7 @@ async function handleDiscoveryReconcile(
     "remove:",
     ...(diff.removed.length > 0 ? diff.removed.map((item) => `  - ${item.model} <- ${item.tier}`) : ["  (none)"]),
     "proposed config:",
-    JSON.stringify(diff.config, null, 2),
+    ...JSON.stringify(diff.config, null, 2).split("\n"),
   ];
 
   await uiResult(ctx, `bifrost ${verb}`, lines);
