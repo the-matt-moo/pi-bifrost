@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.12.0 - 27-09-2026
+
+### Added
+- `/<tier>` slash command for each configured category (e.g. `/frontier`, `/coding`). The command forces that category for one prompt and is stripped before the prompt reaches the model.
+
 ## 4.11.5 - 26-09-2026
 
 ### Fixed

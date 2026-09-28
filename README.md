@@ -133,7 +133,7 @@ type ClassificationSource = "cache" | "classifier" | "regex" | "complexity" | "i
 | `classifier` | LLM classifier determined the tier |
 | `regex` | Regex routing rule matched |
 | `complexity` | Complexity heuristic (quick win for obvious requests) |
-| `inline` | Manual override via `/bifrost <tier> <prompt>` |
+| `inline` | Manual override via `/<tier> <prompt>` or `<tier> <prompt>` |
 | `already active` | Model unchanged (already Pi’s active model) |
 | `fallback` | No classification succeeded; using fallback tier |
 | `N skipped` | N models unavailable due to circuit break/quota/error |
@@ -199,12 +199,15 @@ Narrow discovery scope when needed:
 
 Active advisory/apply mode appears immediately in Bifrost status as `think:advisory` or `think:apply`.
 
-Force a tier for one message by prefixing it:
+Force a tier for one message with its slash command or by prefixing the tier name:
 
 ```
-frontier debug this race condition
+/frontier debug this race condition
+/coding add retry logic to fetchUser
 quick summarize this
 ```
+
+Bifrost registers one `/<tier>` command for each key in `bifrost.json` `models`. Changes to `models` take effect after `/reload`. The command is stripped before the prompt reaches the model. Running `/<tier>` with no prompt shows a usage warning.
 
 ## Architecture & Routing Strategy
 

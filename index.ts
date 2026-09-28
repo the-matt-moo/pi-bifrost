@@ -496,6 +496,25 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     },
   });
 
+  // One slash command per configured category: "/coding fix this" forces the
+  // coding tier for that prompt. Categories come from bifrost.json "models".
+  let commandForcedTier: string | undefined;
+  for (const tier of Object.keys(state.config.models ?? {})) {
+    if (tier === "bifrost") continue;
+    pi.registerCommand(tier, {
+      description: `Route this prompt to the Bifrost ${tier} category`,
+      handler: async (args, ctx) => {
+        const prompt = args.trim();
+        if (!prompt) {
+          log(ctx, `Usage: /${tier} <prompt>`, "warning");
+          return;
+        }
+        commandForcedTier = tier;
+        pi.sendUserMessage(prompt, ctx.isIdle() ? undefined : { deliverAs: "followUp" });
+      },
+    });
+  }
+
   // Keys are machine-local (bifrost.json "keys"), never hardcoded: layouts and host
   // keybindings differ per machine, and Pi's extension API takes literal keys only.
   // Keys reserved by the host (e.g. shift+tab) are skipped with a startup diagnostic.
@@ -827,7 +846,9 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     // The current turn's thinking_level_select has already been delivered by now.
     selfSettingThinkingLevel = undefined;
     lastSeenModel = modelKey(ctx.model);
-    if (event.source === "extension") return { action: "continue" };
+    const commandTier = event.source === "extension" ? commandForcedTier : undefined;
+    commandForcedTier = undefined;
+    if (event.source === "extension" && !commandTier) return { action: "continue" };
     clearBifrostWidgets(ctx);
     // Passive subagent observation — logged even when routing is disabled,
     // so child-session model usage stays visible in debug logs.
@@ -850,8 +871,10 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     if (text.startsWith("/")) return { action: "continue" };
 
     // Inline tier override: "frontier debug this" forces that tier for one prompt.
-    // Pi reserves / for commands, ! for bash. Just type the tier name as first word.
-    const { forcedTier, promptText } = parseInlineOverride(text, state.config.models);
+    // "/frontier debug this" arrives here already stripped, with commandTier set.
+    const { forcedTier, promptText } = commandTier
+      ? { forcedTier: commandTier, promptText: text }
+      : parseInlineOverride(text, state.config.models);
     if (forcedTier) debug("input", "inline_override", { tier: forcedTier });
 
     // Inline override should strip the tier keyword from what LLM sees.
