@@ -66,7 +66,12 @@ export interface PipelineDeps {
 // ── Pipeline interface ─────────────────────────────────────────
 
 export interface ClassificationPipeline {
-  readonly classify: (text: string) => Promise<ClassificationResult>;
+  readonly classify: (text: string, options?: ClassifyOptions) => Promise<ClassificationResult>;
+}
+
+export interface ClassifyOptions {
+  /** Ask the user for a tier when the classifier rejected and no rule matched. */
+  readonly askTier?: (tiers: readonly string[]) => Promise<string | undefined>;
 }
 
 // ── Factory ────────────────────────────────────────────────────
@@ -89,7 +94,8 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
     now = Date.now,
   } = deps;
 
-  async function classify(text: string): Promise<ClassificationResult> {
+  async function classify(text: string, options: ClassifyOptions = {}): Promise<ClassificationResult> {
+    let classifierRejected = false;
     // Stage 1: regex pre-check — direct model references short-circuit everything.
     const endPre = debugMeasure("pipeline", "regex_pre");
     const regexResult = regexClassify(text, regexRules);
@@ -206,6 +212,7 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
               }
             }
             if (outcome?.status === "rejected") {
+              classifierRejected = true;
               classifierCooldowns.delete(modelId);
               debug("pipeline", "classifier.rejected", { model: modelId });
               break;
@@ -226,6 +233,15 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
     if (fallbackToRegex && regexTierMatch) {
       debug("pipeline", "result", { source: "regex", tier: regexTierMatch });
       return { kind: "classified", tier: regexTierMatch, source: "regex" };
+    }
+
+    // Stage 4.5: classifier unsure and no rule matched — let the user pick.
+    if (classifierRejected && options.askTier) {
+      const picked = await options.askTier(tiers);
+      if (picked && tiers.includes(picked)) {
+        debug("pipeline", "result", { source: "inline", tier: picked, asked: true });
+        return { kind: "classified", tier: picked, source: "inline" };
+      }
     }
 
     // Stage 5: default fallback

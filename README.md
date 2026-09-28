@@ -242,7 +242,8 @@ For every prompt, Bifrost executes a staged evaluation:
 4. **Complexity Heuristic**: Obvious short requests route to `quick`; large or multi-file requests route to `frontier` without an LLM call.
 5. **Bounded LLM Classifier**: Tries the classifier model and its ordered fallbacks within a 10-second total budget by default. Failed models cool down for 60 seconds.
 6. **Tier Regex Rules**: The already-computed regex result is used when classification does not return a valid tier.
-7. **Default Tier**: If all else fails, Bifrost uses the configured default.
+7. **Ask the User**: If the classifier rejected the prompt (for example, confidence below `confidenceThreshold`) and no tier rule matched, Bifrost asks you to pick a category in the Pi UI. Classifier failures (timeouts, HTTP errors) do not trigger this prompt. It is also skipped in subagent sessions and when Pi has no UI.
+8. **Default Tier**: If all else fails, or you cancel the prompt, Bifrost uses the configured default.
 
 A regex rule that matches a configured category in the current turn takes priority over a conflicting cached/session-momentum tier from an earlier turn, and skips the complexity heuristic entirely — so a short `coding`-rule match doesn't drop to `quick`, and a long one doesn't escalate to `frontier`, just because those signals would otherwise apply.
 

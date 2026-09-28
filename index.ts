@@ -970,7 +970,11 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const endClassify = debugMeasure("input", "classify");
       const classification = forcedTier
         ? { kind: "classified" as const, tier: forcedTier, source: "inline" as const }
-        : await getPipeline(ctx).classify(promptText);
+        : await getPipeline(ctx).classify(promptText, {
+          askTier: ctx.hasUI && !isChild
+            ? (tiers) => ctx.ui.select("Bifrost: Jev is unsure. Route this prompt to:", [...tiers])
+            : undefined,
+        });
 
       if (classification.kind === "classified") {
         const tag = classification.source === "inline" ? "!" : classification.source;

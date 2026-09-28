@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.13.0 - 27-09-2026
+
+### Added
+- When the classifier rejects a prompt and no tier rule matches, Bifrost asks you to pick a category instead of silently using the default. Cancelling uses the default. It does not ask after classifier failures, in subagent sessions, or when Pi has no UI.
+
 ## 4.12.0 - 27-09-2026
 
 ### Added

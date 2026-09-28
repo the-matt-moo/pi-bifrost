@@ -127,6 +127,45 @@ describe("classification-pipeline", () => {
       assert.equal(result.kind, "fallback");
     });
 
+    describe("askTier after rejection", () => {
+      const rejecting = (overrides: Partial<PipelineDeps> = {}) => createPipeline(deps({
+        classifierModels: [makeClassifierModel("a", "m1")],
+        classifyWithLLM: async () => ({ status: "rejected" }),
+        defaultTier: "economical",
+        ...overrides,
+      }));
+
+      it("asks the user when rejected and no rule matched", async () => {
+        let offered: readonly string[] = [];
+        const r = await rejecting().classify("ambiguous request", {
+          askTier: async (tiers) => { offered = tiers; return "frontier"; },
+        });
+        assert.deepEqual(offered, ["frontier", "economical"]);
+        assert.deepEqual(r, { kind: "classified", tier: "frontier", source: "inline" });
+      });
+
+      it("uses the default tier when the user cancels", async () => {
+        const r = await rejecting().classify("ambiguous request", { askTier: async () => undefined });
+        assert.equal(r.kind, "fallback");
+      });
+
+      it("does not ask when a rule matched", async () => {
+        let asked = false;
+        const r = await rejecting({ regexRules: [{ pattern: "ambiguous", model: "frontier" }] })
+          .classify("ambiguous request", { askTier: async () => { asked = true; return "economical"; } });
+        assert.equal(asked, false);
+        assert.deepEqual(r, { kind: "classified", tier: "frontier", source: "regex" });
+      });
+
+      it("does not ask when the classifier failed rather than rejected", async () => {
+        let asked = false;
+        const r = await rejecting({ classifyWithLLM: async () => ({ status: "failed" }) })
+          .classify("ambiguous request", { askTier: async () => { asked = true; return "frontier"; } });
+        assert.equal(asked, false);
+        assert.equal(r.kind, "fallback");
+      });
+    });
+
     it("validates classifier result against known tiers", async () => {
       const p = createPipeline(
         deps({
