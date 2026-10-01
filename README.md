@@ -141,7 +141,7 @@ type ClassificationSource = "cache" | "classifier" | "regex" | "complexity" | "i
 
 ## Install
 
-> **Requires Pi >= 0.86.0** (uses the 0.86-era normalized-context API).
+> **Requires Pi 1.x** (tested with Pi 1.0.0).
 
 From npm (scoped):
 

@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.14.1 - 01-10-2026
+
+### Changed
+- Require and test against Pi 1.x. Auto-retry replay now has coverage for Pi's deferred `agent_settled` follow-up behavior.
+
 ## 4.14.0 - 30-09-2026
 
 ### Changed
