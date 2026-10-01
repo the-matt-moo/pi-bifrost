@@ -12,6 +12,7 @@ import {
 import {
   autoPinSource,
   createPipeline,
+  frontierSystemPrompt,
   type ClassificationPipeline,
 } from "./classification-pipeline.js";
 import {
@@ -68,7 +69,7 @@ import {
 } from "./diagnostics.js";
 import { RuntimeReliabilityTracker } from "./runtime-reliability.js";
 import { handleRpcRequest } from "./rpc.js";
-import { assessThinking, clampToModel, compareThinkingLevels, ThinkingSession, type ThinkingDecision, type ThinkingLevel } from "./thinking.ts";
+import { assessThinking, capThinkingLevel, clampToModel, compareThinkingLevels, ThinkingSession, type ThinkingDecision, type ThinkingLevel } from "./thinking.ts";
 import { SessionRoutingContext } from "./session-context.js";
 import {
   REGISTRY_REFRESH_TTL_MS,
@@ -123,7 +124,7 @@ function endpointClassifier(id: string, endpoint: string): ClassifierModel {
 function buildPipeline(
   ctx: ExtensionContext,
   config: BifrostConfig,
-  cacheEntries: CacheEntry[],
+  getCacheEntries: () => CacheEntry[],
   classifierEnabled: boolean,
   sessionContext: SessionRoutingContext,
   classifierCooldowns: Map<string, number>,
@@ -146,7 +147,7 @@ function buildPipeline(
   return createPipeline({
     cacheLookup: (text) => {
       if (!cacheEnabled) return undefined;
-      const entry = lookupCache(cacheEntries, text, threshold);
+      const entry = lookupCache(getCacheEntries(), text, threshold);
       if (entry) {
         touchCacheEntry(entry);
         scheduleCacheSave();
@@ -236,7 +237,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       pipeline = buildPipeline(
         ctx,
         state.config,
-        state.cacheEntries,
+        () => state.cacheEntries,
         state.classifierEnabled,
         sessionContext,
         classifierCooldowns,
@@ -387,6 +388,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     selectedTier: string,
     model: Model<Api> | undefined,
     preview = false,
+    jevEffort?: number,
   ) {
     const thinkingConfig = state.config.thinking;
     const rawDecision = assessThinking({
@@ -394,6 +396,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       turnDepth: thinkingSession.turnDepth(prompt),
       lastTurnFailed: thinkingSession.getLastTurnOutcome().failed,
       lastTurnErrored: thinkingSession.getLastTurnOutcome().errored,
+      jevEffort,
     });
     const decision: ThinkingDecision = rawDecision.defaulted
       ? { ...rawDecision, level: thinkingConfig?.defaultLevel ?? "medium", defaulted: true }
@@ -405,22 +408,13 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       level = sticky;
       reasons.push(`sticky task floor ${sticky}`);
     }
-    const free = model !== undefined && billingClass(model) === "free";
-    if (free) {
-      reasons.push("free model maximum");
-    } else {
-      const cap = thinkingConfig?.maxLevel ?? "high";
-      if (compareThinkingLevels(level, cap) > 0) {
-        level = cap;
-        reasons.push(`maximum ${cap}`);
-      }
-      const tierCap = thinkingConfig?.byTier?.[selectedTier];
-      if (tierCap && compareThinkingLevels(level, tierCap) > 0) {
-        level = tierCap;
-        reasons.push(`${selectedTier} tier maximum ${tierCap}`);
-      }
-    }
-    const clamp = clampToModel(level, model ?? {}, free);
+    level = capThinkingLevel(level, reasons, {
+      free: model !== undefined && billingClass(model) === "free",
+      maxLevel: thinkingConfig?.maxLevel ?? "high",
+      tier: selectedTier,
+      tierCap: thinkingConfig?.byTier?.[selectedTier],
+    });
+    const clamp = clampToModel(level, model ?? {});
     if (clamp.reason) reasons.push(clamp.reason);
     const readableReasons = reasons.map((reason) => reason.replace(/^[+-]\d+\s+/, "").replaceAll("-", " "));
     return {
@@ -431,14 +425,14 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     };
   }
 
-  state.previewThinking = (prompt, selectedTier, model) => {
+  state.previewThinking = (prompt, selectedTier, model, jevEffort) => {
     if (state.thinkingPinned) {
       return { level: state.thinkingLevel, mode: "pinned", summary: "manual thinking level is pinned" };
     }
     if (state.thinkingMode === "off") {
       return { level: state.thinkingLevel, mode: "off", summary: "automatic thinking selection is disabled" };
     }
-    const decision = decideThinking(prompt, selectedTier, model, true);
+    const decision = decideThinking(prompt, selectedTier, model, true, jevEffort);
     return { level: decision.level, mode: state.thinkingMode, summary: decision.summary };
   };
 
@@ -475,7 +469,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       if (!resolved.selected) return null;
 
       const selectedTier = resolved.selectedTier ?? tier;
-      const thinking = state.previewThinking?.(text, selectedTier, resolved.selected) ?? { level: "off" };
+      const thinking = state.previewThinking?.(text, selectedTier, resolved.selected, classification.jevEffort) ?? { level: "off" };
       return {
         model: modelKey(resolved.selected),
         thinking: { level: thinking.level },
@@ -590,7 +584,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       state.cacheEntries = warmStartCache(state.cacheEntries, rules, tiers, maxEntries);
       if (state.cacheEntries.length > 0) {
         cacheWriter.schedule();
-        invalidatePipeline();
         debug("cache", "warm_start", { entries: state.cacheEntries.length });
       }
     }
@@ -621,6 +614,12 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
   pi.on("agent_end", async (event) => {
     runtimeReliability.observe(event.messages);
+  });
+
+  pi.on("before_agent_start", async (event) => {
+    if (!state.enabled) return;
+    const systemPrompt = frontierSystemPrompt(event.systemPrompt, state.modelCategory);
+    return systemPrompt ? { systemPrompt } : undefined;
   });
 
   pi.on("session_shutdown", async () => {
@@ -808,7 +807,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const escalated = demoteCacheEntry(state.cacheEntries, lastRoutedPrompt, tiers);
       if (escalated) {
         cacheWriter.schedule();
-        invalidatePipeline();
         debug("feedback", "demotion_escalated", { prompt: lastRoutedPrompt.slice(0, 50) });
       }
       lastRoutedPrompt = undefined;
@@ -976,7 +974,9 @@ export default function bifrostExtension(pi: ExtensionAPI) {
             : undefined,
         });
 
+      let turnJevEffort: number | undefined;
       if (classification.kind === "classified") {
+        turnJevEffort = "jevEffort" in classification ? classification.jevEffort : undefined;
         const tag = classification.source === "inline" ? "!" : classification.source;
         log(ctx, `classify: ${classification.tier} [${tag}]`);
         lastRoutedPrompt = promptText;
@@ -1097,14 +1097,13 @@ export default function bifrostExtension(pi: ExtensionAPI) {
           const endCacheSave = debugMeasure("input", "cacheSave");
           state.cacheEntries = updateCache(state.cacheEntries, promptText, tier, maxEntries);
           cacheWriter.schedule();
-          invalidatePipeline();
           endCacheSave({ entries: state.cacheEntries.length });
         }
       }
 
       const applyThinking = () => {
         if (state.thinkingMode === "off" || state.thinkingPinned) return;
-        const decision = decideThinking(promptText, selectedTier, model);
+        const decision = decideThinking(promptText, selectedTier, model, false, turnJevEffort);
         state.lastThinkingDecision = { score: decision.score, level: decision.level, reasons: decision.reasons };
         thinkingSession.record(decision.level, promptText);
         if (state.thinkingMode === "apply" && decision.level !== pi.getThinkingLevel()) {

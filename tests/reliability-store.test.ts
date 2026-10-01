@@ -133,7 +133,8 @@ describe("reliability store", () => {
       store.reload(cfg, "/proj-b");
       assert.equal(store.path, before);
     } finally {
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(agentDir, { recursive: true, force: true });
     }
   });
@@ -151,7 +152,8 @@ describe("reliability store", () => {
       assert.equal(reloaded.getState().models["openai/gpt-5.4"]?.lastFailureReason, "timeout");
       assert.equal(reloaded.getState().models["openai/gpt-4.1-mini"]?.lastFailureReason, "429");
     } finally {
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(agentDir, { recursive: true, force: true });
     }
   });

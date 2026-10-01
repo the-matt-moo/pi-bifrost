@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   assessThinking,
+  capThinkingLevel,
   clampToModel,
   ThinkingSession,
   type ThinkingSignals,
@@ -78,6 +79,56 @@ describe("thinking", () => {
     assert.ok(result.reasons.length > 0);
   });
 
+  it("maps jev effort directly to base score and overrides text heuristics", () => {
+    // text heuristics would say "diagnostic" (+2) but Jev says low effort (0.2)
+    const result = assessThinking(signals("debug the flaky regression", { jevEffort: 0.2 }));
+    assert.equal(result.score, -3); // -3 for <= 0.3
+    assert.equal(result.level, "minimal");
+    assert.ok(result.reasons.includes("-3 jev-effort (0.20)"));
+  });
+
+  it("maps mid-low jev effort to low, not the configured default", () => {
+    const result = assessThinking(signals("continue", { jevEffort: 0.5 }));
+    assert.equal(result.level, "low");
+    assert.equal(result.defaulted, false);
+    assert.ok(result.reasons.includes("+0 jev-effort (0.50)"));
+  });
+
+  it("maps jev effort band boundaries", () => {
+    const level = (jevEffort: number) => assessThinking(signals("continue", { jevEffort })).level;
+    assert.equal(level(0.3), "minimal");
+    assert.equal(level(0.31), "low");
+    assert.equal(level(0.8), "medium");
+    assert.equal(level(1.2), "high");
+    assert.equal(level(1.5), "high");
+  });
+
+  it("ignores non-finite jev effort and uses text heuristics", () => {
+    for (const jevEffort of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const result = assessThinking(signals("design an algorithm for this parser", { jevEffort }));
+      assert.equal(result.score, 3);
+      assert.ok(result.reasons.includes("+3 reasoning-intent"));
+    }
+  });
+
+  it("caps free models at maxLevel instead of max", () => {
+    const reasons: string[] = [];
+    assert.equal(capThinkingLevel("low", reasons, { free: true, maxLevel: "high", tier: "quick" }), "high");
+    assert.deepEqual(reasons, ["free model maximum high"]);
+    assert.equal(capThinkingLevel("xhigh", [], { free: false, maxLevel: "high", tier: "quick" }), "high");
+    assert.equal(capThinkingLevel("low", [], { free: true, maxLevel: "high", tier: "quick", tierCap: "medium" }), "medium");
+    assert.equal(capThinkingLevel("low", [], { free: false, maxLevel: "high", tier: "quick" }), "low");
+  });
+
+  it("blends jev effort with contextual failure state", () => {
+    const result = assessThinking(signals("still broken", { jevEffort: 0.9, lastTurnFailed: true }));
+    // 0.9 => +1, failed => +2, correction => +2, total => +5
+    assert.equal(result.score, 5);
+    assert.equal(result.level, "high");
+    assert.ok(result.reasons.includes("+1 jev-effort (0.90)"));
+    assert.ok(result.reasons.includes("+2 previous-turn-failed"));
+  });
+
   it("keeps a level sticky for a same-topic follow-up", () => {
     const session = new ThinkingSession();
     session.record("high", "debug the parser failure in parser.ts");
@@ -132,11 +183,11 @@ describe("thinking", () => {
     });
   });
 
-  it("maximizes free-model thinking to the highest supported level", () => {
-    assert.deepEqual(clampToModel("minimal", {
+  it("steps max down to the highest supported level", () => {
+    assert.deepEqual(clampToModel("max", {
       reasoning: true,
       thinkingLevelMap: { max: null, xhigh: null, high: 1 },
-    }, true), {
+    }), {
       level: "high",
       clamped: true,
       reason: "max unsupported by model",

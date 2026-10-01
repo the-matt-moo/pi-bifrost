@@ -117,7 +117,8 @@ describe("reliability", () => {
       assert.equal(loaded.models["openai/gpt-5.4"]?.lastFailureSource, "probe");
       assert.equal(loaded.models["openai/gpt-5.4"]?.lastFailureReason, "timeout");
     } finally {
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });
@@ -130,7 +131,8 @@ describe("reliability", () => {
       const path = reliabilityPath(cwd);
       assert.deepEqual(loadReliability(path), emptyReliabilityState());
     } finally {
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });
@@ -146,7 +148,8 @@ describe("reliability", () => {
       const loaded = loadReliability(path);
       assert.deepEqual(loaded, emptyReliabilityState());
     } finally {
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });
@@ -180,7 +183,8 @@ describe("reliability", () => {
       assert.equal(circuit.open, false);
       assert.equal(circuit.recentFailures, 0);
     } finally {
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
     }
   });

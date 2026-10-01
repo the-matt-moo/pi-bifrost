@@ -37,7 +37,8 @@ describe("config load", () => {
       assert.deepEqual(loadRules(cwd, config), DEFAULT_RULES);
     } finally {
       process.env.HOME = oldHome;
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
       rmSync(extensionDir, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
@@ -102,7 +103,8 @@ describe("config load", () => {
       });
     } finally {
       process.env.HOME = oldHome;
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
       rmSync(extensionDir, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
@@ -130,7 +132,8 @@ describe("config load", () => {
       assert.deepEqual(config.models, { quick: ["agent-quick"] });
     } finally {
       process.env.HOME = oldHome;
-      process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+      if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       rmSync(cwd, { recursive: true, force: true });
       rmSync(extensionDir, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });

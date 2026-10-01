@@ -56,6 +56,7 @@ export interface BifrostState {
     prompt: string,
     selectedTier: string,
     model: Model<Api> | undefined,
+    jevEffort?: number,
   ) => { level: ThinkingLevel; mode: string; summary: string };
   pinned: boolean;
   silent: boolean;
@@ -833,7 +834,8 @@ async function handlePreview(
   const tier = classification.tier;
   const source = classification.kind === "classified" ? classification.source : "fallback";
   const display = resolveTierDisplay(tier, state, ctx);
-  const thinking = state.previewThinking?.(prompt, display.selectedTier, display.selectedModel) ?? {
+  const jevEffort = classification.kind === "classified" ? classification.jevEffort : undefined;
+  const thinking = state.previewThinking?.(prompt, display.selectedTier, display.selectedModel, jevEffort) ?? {
     level: state.thinkingLevel,
     mode: state.thinkingMode,
     summary: state.thinkingPinned ? "manual thinking level is pinned" : "thinking preview unavailable",

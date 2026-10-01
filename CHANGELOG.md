@@ -2,6 +2,20 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.14.0 - 30-09-2026
+
+### Changed
+- Jev's `effort` score now sets the base thinking level when Jev classifies a prompt. Failure, correction, and task-depth signals still add on top. RPC `classifyTask` and `/bifrost preview` use the same score.
+- Accepted Jev classifications with effort `>= 1.5` move to `frontier`, except `coding`, which always stays on the coding model.
+- Frontier-tier models get a short system-prompt directive limiting them to planning, analysis, task breakdown, and delegation prompts (no full implementation code).
+- Free models now think at `thinking.maxLevel` (default `high`) instead of `max`; `byTier` caps also apply to them.
+- Registry classifiers run with thinking off (lowest level when a model cannot disable it).
+
+### Fixed
+- Restored the routing cache implementation lost in an unrelated commit: LRU eviction keeps the newest entries again (it was dropping every new entry once full), concurrent sessions merge cache writes under a file lock, and cache writes are coalesced off the prompt path.
+- The pipeline no longer rebuilds (re-reading route rules from disk) after every classifier result.
+- Tests no longer create an `undefined/` directory when `PI_CODING_AGENT_DIR` is unset.
+
 ## 4.13.0 - 27-09-2026
 
 ### Added

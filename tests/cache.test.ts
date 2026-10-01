@@ -99,6 +99,15 @@ describe("cache", () => {
       assert.equal(entries.length, 3);
       assert.ok(!entries.some((e) => e.normalized === "token0"));
     });
+
+    it("keeps the most recently used entries when timestamps differ", () => {
+      let entries: ReturnType<typeof updateCache> = [];
+      for (let i = 0; i < 5; i++) {
+        entries = updateCache(entries, `token${i}`, "economical", 3);
+        entries.find((e) => e.normalized === `token${i}`)!.lastUsed = 1000 * (i + 1);
+      }
+      assert.deepEqual(entries.map((e) => e.normalized).sort(), ["token2", "token3", "token4"]);
+    });
   });
 
   describe("cachePath", () => {
@@ -108,7 +117,8 @@ describe("cache", () => {
       try {
         assert.equal(cachePath("/project"), join("/home/user/.pi/agent", "bifrost-cache.jsonl"));
       } finally {
-        process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+        if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       }
     });
 
@@ -128,7 +138,8 @@ describe("cache", () => {
       try {
         assert.equal(cachePath("/project", "cache.jsonl"), join("/home/user/.pi/agent", "cache.jsonl"));
       } finally {
-        process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+        if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
       }
     });
   });

@@ -158,6 +158,7 @@ describe("Jev classifier", () => {
       kind: "classified",
       tier: "coding",
       source: "classifier",
+      jevEffort: undefined,
     });
     assert.deepEqual(calls, ["/typesafe", "/openrouter"]);
   });

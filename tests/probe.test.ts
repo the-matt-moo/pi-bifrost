@@ -14,7 +14,8 @@ async function withTempAgentDir(fn: (cwd: string) => Promise<void> | void): Prom
   try {
     await fn(cwd);
   } finally {
-    process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     rmSync(cwd, { recursive: true, force: true });
   }
 }

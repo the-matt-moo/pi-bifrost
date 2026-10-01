@@ -4,12 +4,29 @@ import { debug, debugMeasure } from "./debug.ts";
 import type { SessionRoutingContext } from "./session-context.ts";
 import { assessComplexity } from "./complexity.ts";
 
+// ── Effort-gated routing ───────────────────────────────────────
+
+export const CODING_TIER = "coding";
+export const FRONTIER_TIER = "frontier";
+/** Jev effort at or above this promotes non-coding work to frontier. */
+export const FRONTIER_EFFORT = 1.5;
+
+/** Appended to the system prompt whenever the active model is frontier-tier. */
+export const FRONTIER_DIRECTIVE =
+  "Bifrost frontier role: plan, analyze, and orchestrate only. Produce architecture reasoning, " +
+  "task breakdowns, and precise delegation prompts for execution models. Do not write full " +
+  "implementation code; at most short illustrative snippets.";
+
+export function frontierSystemPrompt(systemPrompt: string, category: string | undefined): string | undefined {
+  return category === FRONTIER_TIER ? `${systemPrompt}\n\n${FRONTIER_DIRECTIVE}` : undefined;
+}
+
 // ── ADT result type ────────────────────────────────────────────
 
 export type ClassificationSource = "cache" | "classifier" | "regex" | "complexity" | "inline";
 
 export type ClassificationResult =
-  | { readonly kind: "classified"; readonly tier: string; readonly source: ClassificationSource }
+  | { readonly kind: "classified"; readonly tier: string; readonly source: ClassificationSource; readonly jevEffort?: number }
   | { readonly kind: "fallback"; readonly tier: string }
   | { readonly kind: "unclassified" };
 
@@ -186,31 +203,28 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
                 : (rawOutcome ?? { status: "failed" as const, jevExtras: undefined });
             const outcome = outcomeOnly as ClassifierAttempt;
             endLLM({ model: modelId, status: outcome?.status, extras: !!jevExtras });
+
             if (outcome?.status === "accepted" && tiers.includes(outcome.tier)) {
               classifierCooldowns.delete(modelId);
-              debug("pipeline", "result", { source: "classifier", tier: outcome.tier });
-              return { kind: "classified", tier: outcome.tier, source: "classifier" };
+              // Coding always stays on the coding model; other high-effort work goes to frontier.
+              const tier = outcome.tier !== CODING_TIER &&
+                  (jevExtras?.effort ?? 0) >= FRONTIER_EFFORT &&
+                  tiers.includes(FRONTIER_TIER)
+                ? FRONTIER_TIER
+                : outcome.tier;
+              debug("pipeline", "result", { source: "classifier", tier, jevEffortHigh: tier !== outcome.tier });
+              return { kind: "classified", tier, source: "classifier", jevEffort: jevExtras?.effort };
             }
+
             // Confidence-gated routing: Jev rejected but isTrivial suggests fast tier
             if (outcome?.status === "rejected" && jevExtras?.isTrivial !== undefined && jevExtras.isTrivial > 0.8) {
               const fastTier = tiers.find((t) => t === "fast" || t === "quick");
               if (fastTier) {
                 debug("pipeline", "result", { source: "classifier", tier: fastTier, jevTrivial: true });
-                return { kind: "classified", tier: fastTier, source: "classifier" };
+                return { kind: "classified", tier: fastTier, source: "classifier", jevEffort: jevExtras?.effort };
               }
             }
-            // Confidence-gated routing: Jev accepted but effort is high — promote tier
-            if (
-              outcome?.status === "accepted" &&
-              jevExtras?.effort !== undefined &&
-              jevExtras.effort >= 1.5
-            ) {
-              const frontierTier = tiers.find((t) => t === "frontier");
-              if (frontierTier && outcome.tier !== frontierTier) {
-                debug("pipeline", "result", { source: "classifier", tier: frontierTier, jevEffortHigh: true });
-                return { kind: "classified", tier: frontierTier, source: "classifier" };
-              }
-            }
+
             if (outcome?.status === "rejected") {
               classifierRejected = true;
               classifierCooldowns.delete(modelId);

@@ -245,6 +245,10 @@ For every prompt, Bifrost executes a staged evaluation:
 7. **Ask the User**: If the classifier rejected the prompt (for example, confidence below `confidenceThreshold`) and no tier rule matched, Bifrost asks you to pick a category in the Pi UI. Classifier failures (timeouts, HTTP errors) do not trigger this prompt. It is also skipped in subagent sessions and when Pi has no UI.
 8. **Default Tier**: If all else fails, or you cancel the prompt, Bifrost uses the configured default.
 
+When Jev accepts a category, its `effort` score (sent in the same request) steers the tier: `coding` always stays on the coding model, and any other category with effort `>= 1.5` moves to `frontier` when that tier is configured.
+
+While a `frontier` model is active, Bifrost appends a short system-prompt directive that restricts it to planning, analysis, task breakdown, and delegation prompts. It does not write full implementation code.
+
 A regex rule that matches a configured category in the current turn takes priority over a conflicting cached/session-momentum tier from an earlier turn, and skips the complexity heuristic entirely — so a short `coding`-rule match doesn't drop to `quick`, and a long one doesn't escalate to `frontier`, just because those signals would otherwise apply.
 
 Registry refreshes use stale-while-revalidate: existing models route the current prompt immediately while refresh runs in the background. An empty registry or explicit recovery still waits for fresh data. Quota telemetry also backs off after empty results and degrades to neutral routing.
@@ -254,9 +258,10 @@ To prevent context-loss from per-prompt model churn, Bifrost **auto-pins** the s
 
 ### 5. Thinking Mode Steering
 If `"thinking": { "mode": "apply" }` is set in config, Bifrost assesses prompt complexity to dynamically steer the selected model's **thinking level/effort**.
+- When Jev classified the prompt, its `effort` score sets the base level; failure, correction, and task-depth signals still add on top.
 - Ambiguous logic puzzles, architectural queries, or math proofs elevate the thinking budget.
 - Simple formatting or translation requests lower the thinking budget.
-- Free models always use their highest supported thinking level; manual thinking pins still take precedence.
+- Free models think at `thinking.maxLevel` (default `high`), bounded by any `byTier` cap; manual thinking pins still take precedence.
 - `advisory` mode logs what Bifrost *would* do without modifying Pi's active state.
 - When *you* manually change the thinking level, Bifrost logs `Thinking level manually changed to <level>; Bifrost thinking pinned.` and pins for the session. Bifrost's own automatic applies are silent — that line means a manual change, not a Bifrost default.
 - Only a thinking change under the *same* model pins thinking. Switching models re-clamps the thinking level as a side effect; that never pins. `Ctrl+P` toggles the pin; `Ctrl+Delete` unpins model and thinking.

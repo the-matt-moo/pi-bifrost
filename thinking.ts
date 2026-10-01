@@ -5,6 +5,7 @@ export interface ThinkingSignals {
   turnDepth: number;
   lastTurnFailed: boolean;
   lastTurnErrored: boolean;
+  jevEffort?: number;
 }
 
 export interface ThinkingDecision {
@@ -48,29 +49,66 @@ function tokenize(text: string): Set<string> {
   return new Set(text.toLowerCase().match(/\S+/g) ?? []);
 }
 
+// ponytail: Jev effort cutoffs assume a ~0-2 score scale (unverified); tune from `jev.done` debug logs.
+export const JEV_EFFORT_XHIGH = 1.5;
+export const JEV_EFFORT_HIGH = 1.2;
+export const JEV_EFFORT_MEDIUM = 0.8;
+export const JEV_EFFORT_MINIMAL = 0.3;
+
+/** Map a Jev effort score onto the heuristic point scale (0 points = low). */
+function jevEffortPoints(effort: number): number {
+  if (effort >= JEV_EFFORT_XHIGH) return 5;
+  if (effort >= JEV_EFFORT_HIGH) return 3;
+  if (effort >= JEV_EFFORT_MEDIUM) return 1;
+  return effort > JEV_EFFORT_MINIMAL ? 0 : -3;
+}
+
 /** Score a prompt using bounded lexical and structural signals. */
 export function assessThinking(signals: ThinkingSignals): ThinkingDecision {
-  const { text } = signals;
+  const { text, jevEffort } = signals;
   const scanned = text.slice(0, SCAN_LIMIT);
   let score = 0;
   const reasons: string[] = [];
 
-  if (REASONING_PATTERN.test(scanned)) {
-    score += 3;
-    reasons.push("+3 reasoning-intent");
+  if (jevEffort !== undefined && Number.isFinite(jevEffort)) {
+    const points = jevEffortPoints(jevEffort);
+    score += points;
+    reasons.push(`${points < 0 ? "" : "+"}${points} jev-effort (${jevEffort.toFixed(2)})`);
+  } else {
+    if (REASONING_PATTERN.test(scanned)) {
+      score += 3;
+      reasons.push("+3 reasoning-intent");
+    }
+    if (DIAGNOSTIC_PATTERN.test(scanned)) {
+      score += 2;
+      reasons.push("+2 diagnostic");
+    }
+    if (MULTI_STEP_PATTERN.test(scanned)) {
+      score += 1;
+      reasons.push("+1 multi-step");
+    }
+    if (MECHANICAL_PATTERN.test(scanned)) {
+      score -= 3;
+      reasons.push("-3 mechanical");
+    }
+    if (text.length > 1500) {
+      score += 1;
+      reasons.push("+1 prompt-breadth");
+    }
+    if (text.length > 6000) {
+      score += 1;
+      reasons.push("+1 prompt-size");
+    }
+    if (HAS_FILE_PATTERN.test(scanned) && fileReferenceCount(scanned) >= 3) {
+      score += 1;
+      reasons.push("+1 multi-file");
+    }
+    if (scanned.includes("?") && countQuestionMarks(scanned) >= 2) {
+      score += 1;
+      reasons.push("+1 multiple-questions");
+    }
   }
-  if (DIAGNOSTIC_PATTERN.test(scanned)) {
-    score += 2;
-    reasons.push("+2 diagnostic");
-  }
-  if (MULTI_STEP_PATTERN.test(scanned)) {
-    score += 1;
-    reasons.push("+1 multi-step");
-  }
-  if (MECHANICAL_PATTERN.test(scanned)) {
-    score -= 3;
-    reasons.push("-3 mechanical");
-  }
+
   if (signals.lastTurnFailed) {
     score += 2;
     reasons.push("+2 previous-turn-failed");
@@ -87,25 +125,9 @@ export function assessThinking(signals: ThinkingSignals): ThinkingDecision {
     score += 1;
     reasons.push("+1 previous-turn-error");
   }
-  if (text.length > 1500) {
-    score += 1;
-    reasons.push("+1 prompt-breadth");
-  }
-  if (text.length > 6000) {
-    score += 1;
-    reasons.push("+1 prompt-size");
-  }
-  if (HAS_FILE_PATTERN.test(scanned) && fileReferenceCount(scanned) >= 3) {
-    score += 1;
-    reasons.push("+1 multi-file");
-  }
-  if (scanned.includes("?") && countQuestionMarks(scanned) >= 2) {
-    score += 1;
-    reasons.push("+1 multiple-questions");
-  }
 
   if (reasons.length === 0) {
-    return { level: "medium", score: 0, reasons: [], defaulted: true };
+    return { level: "medium", score: 0, reasons, defaulted: true };
   }
 
   const level: ThinkingLevel = score <= -2
@@ -128,12 +150,30 @@ export function compareThinkingLevels(a: ThinkingLevel, b: ThinkingLevel): numbe
 
 const LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
+/** Apply config caps. Free models think at `maxLevel`; caps still bound them to save tokens and rate limits. */
+export function capThinkingLevel(
+  level: ThinkingLevel,
+  reasons: string[],
+  caps: { free: boolean; maxLevel: ThinkingLevel; tier: string; tierCap?: ThinkingLevel },
+): ThinkingLevel {
+  if (caps.free && level !== caps.maxLevel) {
+    level = caps.maxLevel;
+    reasons.push(`free model maximum ${caps.maxLevel}`);
+  } else if (compareThinkingLevels(level, caps.maxLevel) > 0) {
+    level = caps.maxLevel;
+    reasons.push(`maximum ${caps.maxLevel}`);
+  }
+  if (caps.tierCap && compareThinkingLevels(level, caps.tierCap) > 0) {
+    level = caps.tierCap;
+    reasons.push(`${caps.tier} tier maximum ${caps.tierCap}`);
+  }
+  return level;
+}
+
 export function clampToModel(
   level: ThinkingLevel,
   model: { reasoning?: boolean; thinkingLevelMap?: Record<string, unknown> },
-  maximize = false,
 ): { level: ThinkingLevel; clamped: boolean; reason?: string } {
-  if (maximize) level = "max";
   if (model.reasoning === false) {
     return level === "off"
       ? { level, clamped: false }

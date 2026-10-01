@@ -367,6 +367,8 @@ async function classifyWithDirectHttp(
         {
           maxTokens,
           temperature,
+          // Omitted reasoning disables thinking; models that cannot disable it get the lowest level.
+          ...(classifierModel.model.thinkingLevelMap?.off === null ? { reasoning: "minimal" as const } : {}),
           signal: options.signal ?? ctx.signal,
           cacheRetention: "none",
         },
@@ -493,6 +495,8 @@ async function classifyWithSubprocess(
     userPrompt,
     "--model",
     `${model.provider}/${model.id}`,
+    "--thinking",
+    "off",
   ];
 
   return new Promise((resolve) => {

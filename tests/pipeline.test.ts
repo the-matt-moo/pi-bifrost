@@ -1,6 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { autoPinSource, createPipeline, type PipelineDeps } from "../classification-pipeline.ts";
+import {
+  autoPinSource,
+  createPipeline,
+  FRONTIER_DIRECTIVE,
+  frontierSystemPrompt,
+  type PipelineDeps,
+} from "../classification-pipeline.ts";
 import type { SessionRoutingContext } from "../session-context.ts";
 import { makeClassifierModel } from "./helpers.ts";
 
@@ -505,6 +511,58 @@ describe("classification-pipeline", () => {
       if (r.kind === "fallback") {
         assert.equal(r.tier, "economical");
       }
+    });
+  });
+  describe("effort-gated frontier routing", () => {
+    const tiers = ["quick", "coding", "general", "frontier"];
+    const route = (tier: string, effort?: number) => createPipeline(deps({
+      tiers,
+      complexityEnabled: false,
+      classifierModels: [makeClassifierModel("test", "jev")],
+      classifyWithLLM: async () => ({ status: "accepted" as const, tier, jevExtras: { effort } }),
+    })).classify("task");
+
+    for (const effort of [undefined, 0, 1.49, 1.5, 2]) {
+      it(`keeps coding on the coding tier at effort ${effort}`, async () => {
+        assert.deepEqual(await route("coding", effort), {
+          kind: "classified", tier: "coding", source: "classifier", jevEffort: effort,
+        });
+      });
+    }
+
+    for (const effort of [1.5, 2]) {
+      it(`promotes non-coding work to frontier at effort ${effort}`, async () => {
+        assert.deepEqual(await route("general", effort), {
+          kind: "classified", tier: "frontier", source: "classifier", jevEffort: effort,
+        });
+      });
+    }
+
+    for (const effort of [undefined, 0, 1.49]) {
+      it(`keeps non-coding work on its tier below the threshold (effort ${effort})`, async () => {
+        assert.equal(((await route("general", effort)) as { tier: string }).tier, "general");
+      });
+    }
+
+    it("does not promote when no frontier tier is configured", async () => {
+      const r = await createPipeline(deps({
+        tiers: ["general", "coding"],
+        complexityEnabled: false,
+        classifierModels: [makeClassifierModel("test", "jev")],
+        classifyWithLLM: async () => ({ status: "accepted" as const, tier: "general", jevExtras: { effort: 2 } }),
+      })).classify("task");
+      assert.equal((r as { tier: string }).tier, "general");
+    });
+  });
+
+  describe("frontier directive", () => {
+    it("appends the planning-only directive for frontier only", () => {
+      assert.equal(frontierSystemPrompt("base", "frontier"), `base
+
+${FRONTIER_DIRECTIVE}`);
+      assert.match(FRONTIER_DIRECTIVE, /Do not write full implementation code/);
+      assert.equal(frontierSystemPrompt("base", "coding"), undefined);
+      assert.equal(frontierSystemPrompt("base", undefined), undefined);
     });
   });
 });
