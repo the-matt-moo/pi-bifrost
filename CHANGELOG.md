@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.14.3 - 03-10-2026
+
+### Fixed
+- Enable minimal thinking while probing thinking-only models, preventing Antigravity's invalid budget-zero error during `/bifrost refresh`.
+
 ## 4.14.2 - 03-10-2026
 
 ### Fixed

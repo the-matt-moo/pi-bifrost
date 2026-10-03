@@ -159,8 +159,9 @@ async function probeOne(
         signal: controller.signal,
         cacheRetention: "none",
       };
-      // Models requiring thinking mode need a minimum budget to avoid "Budget 0 is invalid" error
-      if (model.reasoning) {
+      // Thinking-only models reject Pi's default disabled-thinking request.
+      if (model.reasoning && model.thinkingLevelMap?.off === null) {
+        streamOptions.reasoning = "minimal";
         if (model.api === "google-generative-ai" || model.api === "antigravity-api") {
           streamOptions.thinkingBudgets = { minimal: 1024 };
         } else if (model.api === "anthropic-messages") {

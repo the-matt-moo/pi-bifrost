@@ -165,7 +165,7 @@ Run once after install:
 /bifrost init
 ```
 
-This probes every model you have access to, finds which ones respond, and writes a config. Successful probe results are reused for one hour; pass `--force` to retest immediately. Bifrost routes prompts from that point forward. If a selected model ends with a provider error, Bifrost opens its circuit immediately; replay-safe rate-limit, overload, and transient 502/503/504 failures can automatically retry on the next healthy model.
+This probes every model you have access to, finds which ones respond, and writes a config. Thinking-only models are probed with minimal thinking. Successful probe results are reused for one hour; pass `--force` to retest immediately. Bifrost routes prompts from that point forward. If a selected model ends with a provider error, Bifrost opens its circuit immediately; replay-safe rate-limit, overload, and transient 502/503/504 failures can automatically retry on the next healthy model.
 
 If `/bifrost init` has not been run, Bifrost auto-derives tier candidates at runtime from the live registry using `guessTier`. This works but skips probe-based ordering and quota preferences. Run `/bifrost init` for stable, reproducible routing.
 

@@ -68,6 +68,36 @@ describe("probe transport", () => {
     });
   });
 
+  it("enables minimal thinking for thinking-only models", async () => {
+    await withTempAgentDir(async () => {
+      const model = {
+        provider: "antigravity",
+        id: "gemini-3.1-pro",
+        api: "antigravity-api",
+        cost: { input: 1.25, output: 5 },
+        baseUrl: "https://example.invalid/v1",
+        reasoning: true,
+        thinkingLevelMap: { off: null, minimal: null, low: "low" },
+      };
+      let options: Record<string, unknown> | undefined;
+      const ctx = {
+        modelRegistry: {
+          getAvailable: () => [model],
+          getProvider: () => ({}),
+          streamSimple: (_model: unknown, _context: unknown, value: Record<string, unknown>) => (
+            options = value,
+            { result: async () => ({ content: [{ type: "text", text: "2" }], usage: { totalTokens: 2 }, stopReason: "stop" }) }
+          ),
+        },
+      } as never;
+
+      const result = await runProbe(ctx);
+      assert.equal(result.results[0]?.status, "ok");
+      assert.equal(options?.reasoning, "minimal");
+      assert.deepEqual(options?.thinkingBudgets, { minimal: 1024 });
+    });
+  });
+
   it("treats thinking-only stream response as ok", async () => {
     await withTempAgentDir(async () => {
       const model = {
