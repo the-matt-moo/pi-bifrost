@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.14.2 - 03-10-2026
+
+### Fixed
+- Prevented `/bifrost remove-model` entries from being rediscovered from Pi's stale scoped-model snapshot in the same session.
+
 ## 4.14.1 - 01-10-2026
 
 ### Changed

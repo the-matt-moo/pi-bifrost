@@ -50,6 +50,7 @@ function isFreeModel(model: Model<Api>): boolean {
 export function discoverModels(
   ctx: ExtensionContext,
   options: DiscoveryOptions,
+  excludedScopedModelKeys: ReadonlySet<string> = new Set(),
 ): DiscoveryResult {
   const available = [...ctx.modelRegistry.getAvailable()].sort((a, b) => modelKey(a).localeCompare(modelKey(b)));
   const availableByKey = new Map(available.map((model) => [modelKey(model), model]));
@@ -71,6 +72,7 @@ export function discoverModels(
           return current;
         })
         .filter((model): model is Model<Api> => model !== undefined)
+        .filter((model) => !excludedScopedModelKeys.has(modelKey(model)))
         .sort((a, b) => modelKey(a).localeCompare(modelKey(b)));
     }
   }

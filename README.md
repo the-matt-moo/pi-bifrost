@@ -194,7 +194,7 @@ Narrow discovery scope when needed:
 | `/bifrost doctor` | Validate config against available models |
 | `/bifrost classifier on` / `off` | Toggle LLM classifier |
 | `/bifrost add-model [<model-key>]` | Probe the model first, then add it to settings.json enabledModels, mark it as scoped in config, prompt for category placement, and refresh registry |
-| `/bifrost remove-model <model-key>` | Remove model from settings.json enabledModels, all bifrost.json tiers, and discovery metadata; refresh registry |
+| `/bifrost remove-model <model-key>` | Remove model from settings.json enabledModels, all bifrost.json tiers, and discovery metadata; scoped refreshes honor the removal immediately, even though Pi's scoped snapshot is stale until restart |
 | `/bifrost thinking [off\|advisory\|apply\|status]` | Inspect or set prompt-derived thinking mode |
 
 Active advisory/apply mode appears immediately in Bifrost status as `think:advisory` or `think:apply`.

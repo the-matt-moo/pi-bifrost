@@ -70,6 +70,8 @@ export interface BifrostState {
   lastRegistryRefreshAt?: number;
   forceRegistryRefresh?: boolean;
   registryRefreshInflight?: Promise<boolean>;
+  /** Scoped keys removed during this Pi session; ctx.scopedModels is immutable until restart. */
+  removedScopedModelKeys: Set<string>;
   refreshRegistry: (ctx: ExtensionContext) => Promise<boolean>;
   scheduleCacheSave: () => void;
   flushCacheSave: () => Promise<void>;
@@ -367,7 +369,7 @@ async function refreshAndDiscover(
   }
   uiDone(ctx);
 
-  const discovery = discoverModels(ctx, options);
+  const discovery = discoverModels(ctx, options, state.removedScopedModelKeys);
   for (const message of discovery.messages) log(ctx, message, "warning");
   log(ctx, `Discovery sources: ${discoverySourceLine(discovery)}.`);
   for (const item of discovery.skipped) log(ctx, `Skipped: ${item}.`, "warning");
@@ -1030,6 +1032,7 @@ async function handleAddModel(
   }
 
   // Mark as scoped model
+  state.removedScopedModelKeys.delete(key);
   current.discovery = current.discovery ?? { managed: {} };
   current.discovery.managed = current.discovery.managed ?? {};
   const managedSources = current.discovery.managed[key] ?? [];
@@ -1129,6 +1132,9 @@ async function handleRemoveModel(
   // Write and reload config
   writeAndReloadConfig(current, state);
   log(ctx, `Updated bifrost.json: removed "${key}" from categories: ${removedFromCategories.join(", ") ?? "(none)"}`);
+
+  // ctx.scopedModels is fixed for this session, so suppress this key until Pi restarts.
+  state.removedScopedModelKeys.add(key);
 
   // Run registry refresh
   uiBusy(ctx, "Refreshing registry...");

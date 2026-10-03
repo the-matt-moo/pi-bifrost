@@ -53,6 +53,18 @@ describe("discovery sources", () => {
     assert.equal(result.sourceModels.free, undefined);
   });
 
+  it("excludes a model removed from the current session's scoped selection", () => {
+    const removed = model("vendor", "removed", 1);
+    const kept = model("vendor", "kept", 1);
+    const result = discoverModels(
+      context([removed, kept], [removed, kept], [removed, kept]),
+      scopedOnly,
+      new Set(["vendor/removed"]),
+    );
+    assert.deepEqual(result.candidates.map((entry) => `${entry.provider}/${entry.id}`), ["vendor/kept"]);
+    assert.deepEqual(result.sourceModels.scoped?.map((entry) => `${entry.provider}/${entry.id}`), ["vendor/kept"]);
+  });
+
   it("finds --free from provider and cost metadata without a fixed provider id", () => {
     const free = model("dynamic-provider", "current-free", 0);
     const paid = model("dynamic-provider", "paid", 1);

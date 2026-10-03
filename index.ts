@@ -292,6 +292,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }),
     lastRegistryRefreshAt: undefined,
     forceRegistryRefresh: false,
+    removedScopedModelKeys: new Set(),
     refreshRegistry: (ctx) => refreshRegistry(
       state,
       () => ctx.modelRegistry.refresh(),
