@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.15.1 - 04-10-2026
+
+### Fixed
+- Render the `ultra` routing tier in red instead of the terminal default color.
+
 ## 4.15.0 - 04-10-2026
 
 ### Added

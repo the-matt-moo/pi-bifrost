@@ -191,6 +191,7 @@ const TIER_COLORS: Record<string, string> = {
   general: "\x1b[36m",      // cyan
   coding: "\x1b[35m",       // magenta
   frontier: "\x1b[38;5;208m", // orange
+  ultra: "\x1b[31m",        // red
 };
 
 const HOT_PINK = "\x1b[38;2;255;105;180m"; // pinned category slot

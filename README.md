@@ -85,7 +85,7 @@ Bifrost: <tier> → <model> (<source>; N skipped)
 ```
 
 - `Bifrost` renders in a rainbow gradient.
-- `<tier>` is colored by tier: quick (green), general (cyan), writing (blue), coding (magenta), frontier (orange), ultra (default).
+- `<tier>` is colored by tier: quick (green), general (cyan), writing (blue), coding (magenta), frontier (orange), ultra (red).
 - `→` is white.
 - `<model>` (provider/name, e.g. `openrouter/tencent/hy3`) is violet.
 - the trailing `(source; N skipped)` note is grey.
