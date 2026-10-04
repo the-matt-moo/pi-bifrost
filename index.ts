@@ -79,6 +79,8 @@ import {
   refreshRegistry,
 } from "./ux-status.js";
 
+import { queueRemoteText, consumeRemoteText } from "./remote-signal.js";
+
 // ── Pipeline builder (composition root) ────────────────────────
 
 function classifierModelPatterns(config: BifrostConfig): string[] {
@@ -481,6 +483,18 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         pi.events.emit(`bifrost:rpc:v1:reply:${result.requestId}`, result.reply);
       }
     });
+
+    // Cross-extension signal: remote-pi emits this before sendUserMessage so
+    // Bifrost can recognise the resulting extension-source input event and
+    // route it like a locally-typed prompt.
+    pi.events.on("remote-pi:user-prompt", (payload: unknown) => {
+      if (
+        typeof payload === "object" && payload !== null &&
+        typeof (payload as { text?: unknown }).text === "string"
+      ) {
+        queueRemoteText((payload as { text: string }).text);
+      }
+    });
   }
 
   pi.registerCommand("bifrost", {
@@ -847,7 +861,9 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     lastSeenModel = modelKey(ctx.model);
     const commandTier = event.source === "extension" ? commandForcedTier : undefined;
     commandForcedTier = undefined;
-    if (event.source === "extension" && !commandTier) return { action: "continue" };
+    if (event.source === "extension" && !commandTier) {
+      if (!consumeRemoteText(event.text)) return { action: "continue" };
+    }
     clearBifrostWidgets(ctx);
     // Passive subagent observation — logged even when routing is disabled,
     // so child-session model usage stays visible in debug logs.

@@ -54,6 +54,8 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 
 Bifrost exposes an in-process `bifrost:rpc:v1` classification channel for subagent bridges. The `classifyTask` method returns the selected model and thinking level without changing the active Pi session model. This supports Claude Code-style subagent extensions such as `@tintinweb/pi-subagents` and `@gotgenes/pi-subagents`. Child subagent sessions are automatically detected and silenced so background/headless routing logs do not emit raw `stderr` into the terminal or corrupt the parent's fullscreen prompt window.
 
+Bifrost also listens for `remote-pi:user-prompt` events on the shared event bus so prompts sent from the Remote Pi mobile app are classified and routed like locally-typed input.
+
 ### How the Improved Routing Pipeline Works
 
 The original Bifrost pipeline was a 4-stage waterfall: try the cache, then ask an LLM classifier, then fall back to regex rules, then use the default tier. Each prompt was classified independently with no memory of recent context, no awareness of prompt complexity, and no feedback from routing outcomes.

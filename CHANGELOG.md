@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.14.5 - 04-10-2026
+
+### Fixed
+- Route Remote Pi mobile prompts through Bifrost classification before they are sent to the active session model.
+
 ## 4.14.4 - 04-10-2026
 
 ### Fixed
