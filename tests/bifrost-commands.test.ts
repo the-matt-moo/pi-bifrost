@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createCommandRouter, currentBifrostModeState, getBifrostCommandCompletions, isChildSession, isBifrostSilent, log, uiBusy, type BifrostState } from "../commands.ts";
+import { createCommandRouter, currentBifrostModeState, getBifrostCommandCompletions, isChildSession, isBifrostSilent, log, syncSubagentModelSettings, uiBusy, type BifrostState } from "../commands.ts";
 
 function makeCtx() {
   const calls: Array<{ kind: string; value?: unknown; title?: string; options?: string[]; lines?: string[]; factory?: unknown }> = [];
@@ -92,6 +92,29 @@ function makeState(saveModeState: () => void = () => {}) {
 }
 
 describe("bifrost command ui", () => {
+  it("keeps subagent models within enabledModels", () => {
+    const settings = {
+      enabledModels: ["provider/allowed"],
+      subagents: {
+        defaultModel: "provider/blocked",
+        modelScope: { enforce: true, allow: ["provider/blocked"] },
+        agentOverrides: {
+          worker: { model: "provider/blocked", fallbackModels: ["provider/allowed", "provider/blocked"] },
+          scout: { model: "provider/allowed", fallbackModels: ["provider/blocked"] },
+        },
+      },
+    };
+
+    assert.equal(syncSubagentModelSettings(settings), true);
+    assert.deepEqual(settings.subagents, {
+      modelScope: { enforce: true, allow: ["provider/allowed"] },
+      agentOverrides: {
+        worker: { fallbackModels: ["provider/allowed"] },
+        scout: { model: "provider/allowed", fallbackModels: [] },
+      },
+    });
+  });
+
   it("reports the category selected by routing", () => {
     const state = { ...makeState(), modelCategory: "general" };
     assert.equal(currentBifrostModeState(state as never).modelCategory, "general");

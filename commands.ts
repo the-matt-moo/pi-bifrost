@@ -79,6 +79,44 @@ export interface BifrostState {
 
 const silentContexts = new WeakSet<ExtensionContext>();
 
+type JsonRecord = Record<string, unknown>;
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Keep static subagent preferences within Pi's persisted model scope. */
+export function syncSubagentModelSettings(settings: JsonRecord): boolean {
+  const enabledModels = Array.isArray(settings.enabledModels)
+    ? settings.enabledModels.filter((model): model is string => typeof model === "string" && model.trim().length > 0)
+    : [];
+  if (enabledModels.length === 0) return false;
+
+  const before = JSON.stringify(settings.subagents);
+  const allowed = new Set(enabledModels);
+  const subagents = isJsonRecord(settings.subagents) ? settings.subagents : {};
+  subagents.modelScope = { enforce: true, allow: enabledModels };
+
+  if (typeof subagents.defaultModel === "string" && !allowed.has(subagents.defaultModel)) {
+    delete subagents.defaultModel;
+  }
+
+  if (isJsonRecord(subagents.agentOverrides)) {
+    for (const override of Object.values(subagents.agentOverrides)) {
+      if (!isJsonRecord(override)) continue;
+      if (typeof override.model === "string" && !allowed.has(override.model)) delete override.model;
+      if (Array.isArray(override.fallbackModels)) {
+        override.fallbackModels = override.fallbackModels.filter(
+          (model): model is string => typeof model === "string" && allowed.has(model),
+        );
+      }
+    }
+  }
+
+  settings.subagents = subagents;
+  return JSON.stringify(subagents) !== before;
+}
+
 export function isChildSession(ctx: ExtensionContext): boolean {
   if (process.env.PI_SUBAGENT_RUN_ID) return true;
   try {
@@ -380,6 +418,12 @@ function writeAndReloadConfig(config: BifrostConfig, state: BifrostState): void 
   const dir = getAgentDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "bifrost.json"), JSON.stringify(config, null, 2));
+
+  const settingsPath = join(dir, "settings.json");
+  const settings = existsSync(settingsPath) ? readJson<JsonRecord>(settingsPath) : undefined;
+  if (settings && syncSubagentModelSettings(settings)) {
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  }
 
   state.config = loadConfig(process.cwd(), state.extensionDir);
   const runtimeState = loadRuntimeState(runtimeStatePath(process.cwd()), {

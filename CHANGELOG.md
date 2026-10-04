@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.14.4 - 04-10-2026
+
+### Fixed
+- Keep static subagent model preferences within `settings.json` `enabledModels` whenever Bifrost writes its configuration.
+
 ## 4.14.3 - 03-10-2026
 
 ### Fixed

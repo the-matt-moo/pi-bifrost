@@ -189,12 +189,12 @@ Narrow discovery scope when needed:
 | `/bifrost silence` / `unsilence` | Suppress or restore console output |
 | `/bifrost preview <prompt>` | See model routing, thinking level, and concise reasons without sending |
 | `/bifrost reload` | Reload config after manual edits |
-| `/bifrost refresh [--free] [--force]` | Reconcile scoped models without recategorizing tiers; force bypasses fresh probe results |
+| `/bifrost refresh [--free] [--force]` | Reconcile scoped models without recategorizing tiers; force bypasses fresh probe results and synchronizes static subagent preferences to `enabledModels` |
 | `/bifrost probe [--scoped] [--free] [--force]` | Check model availability; reuse fresh successes unless forced |
 | `/bifrost doctor` | Validate config against available models |
 | `/bifrost classifier on` / `off` | Toggle LLM classifier |
-| `/bifrost add-model [<model-key>]` | Probe the model first, then add it to settings.json enabledModels, mark it as scoped in config, prompt for category placement, and refresh registry |
-| `/bifrost remove-model <model-key>` | Remove model from settings.json enabledModels, all bifrost.json tiers, and discovery metadata; scoped refreshes honor the removal immediately, even though Pi's scoped snapshot is stale until restart |
+| `/bifrost add-model [<model-key>]` | Probe the model first, then add it to settings.json enabledModels, synchronize static subagent preferences, mark it as scoped in config, prompt for category placement, and refresh registry |
+| `/bifrost remove-model <model-key>` | Remove model from settings.json enabledModels, static subagent preferences, all bifrost.json tiers, and discovery metadata; scoped refreshes honor the removal immediately, even though Pi's scoped snapshot is stale until restart |
 | `/bifrost thinking [off\|advisory\|apply\|status]` | Inspect or set prompt-derived thinking mode |
 
 Active advisory/apply mode appears immediately in Bifrost status as `think:advisory` or `think:apply`.
