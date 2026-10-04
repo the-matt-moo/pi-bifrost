@@ -241,12 +241,16 @@ export const DEFAULT_RULES: RouteRule[] = [
       "\\b(use a free model|free model only|no paid model|zero cost|spend nothing|do not spend)\\b",
     model: "quick",
   },
+  {
+    pattern: "(^|\\s)\\/?ultra(?:\\s|$)",
+    model: "ultra",
+  },
 ];
 
 /** Categories strict-by-default: unhealthy/unavailable candidates must not
  *  silently fall back cross-category (e.g. coding falling back to general
  *  and picking an unapproved model). */
-export const DEFAULT_STRICT_CATEGORIES: readonly string[] = ["coding"];
+export const DEFAULT_STRICT_CATEGORIES: readonly string[] = ["coding", "ultra"];
 
 /** True when `category` must not fall back to another category on
  *  resolution failure. Strict behavior only activates for categories the

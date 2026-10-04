@@ -2,6 +2,14 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.15.0 - 04-10-2026
+
+### Added
+- Add `ultra` tier: `/ultra` regex rule, strict-by-default category, `first` placement strategy, and tier color.
+- Preserve existing config during `/bifrost init` and discovery reconcile (default tier, category strategies, classifier, rules, discovery, and all optional sections).
+- Prompt for multi-category placement of newly discovered models interactively in init and reconcile; falls back to auto-classification when non-interactive.
+- Back up `bifrost.json` to `bifrost.bak` before rewriting it.
+
 ## 4.14.5 - 04-10-2026
 
 ### Fixed

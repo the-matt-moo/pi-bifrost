@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadRuntimeState, runtimeStatePath } from "./runtime-state.ts";
 import type { BifrostConfig } from "./config.ts";
@@ -350,6 +350,7 @@ const PROPOSAL_STRATEGIES: Record<string, RoutingStrategy> = {
   general: "first",
   coding: "first",
   frontier: "first",
+  ultra: "first",
   economical: "cheapest",
 };
 
@@ -358,28 +359,45 @@ export function buildInitProposal(
   classifierModel: string,
   extensionDir: string,
   discovery?: BifrostConfig["discovery"],
+  existingConfig?: BifrostConfig,
 ): Record<string, unknown> {
   const tierKeys = Object.keys(models);
-  // Pick the first populated tier as default, or fall back to first key.
-  const defaultTier = tierKeys.length > 0 ? tierKeys[0] : "general";
-  const categoryStrategies: Record<string, RoutingStrategy> = {};
+  // Preserve existing default tier if set, otherwise pick first populated tier.
+  const defaultTier = existingConfig?.default ?? (tierKeys.length > 0 ? tierKeys[0] : "general");
+  // Preserve existing category strategies, only add defaults for new tiers.
+  const categoryStrategies: Record<string, RoutingStrategy> = {
+    ...(existingConfig?.categoryStrategies ?? {}),
+  };
   for (const t of tierKeys) {
-    categoryStrategies[t] = PROPOSAL_STRATEGIES[t] ?? "first";
+    if (!categoryStrategies[t]) {
+      categoryStrategies[t] = PROPOSAL_STRATEGIES[t] ?? "first";
+    }
   }
+  // Preserve existing classifier config unless none exists.
+  const classifier = existingConfig?.classifier
+    ? { ...existingConfig.classifier }
+    : { enabled: true, model: classifierModel, method: "auto" as const };
+
   return {
     $schema: `${extensionDir.replace(/\/$/, "")}/schema.json`,
-    enabled: true,
+    enabled: existingConfig?.enabled ?? true,
+    silent: existingConfig?.silent ?? false,
     default: defaultTier,
-    strategy: "first" as RoutingStrategy,
+    strategy: (existingConfig?.strategy ?? "first") as RoutingStrategy,
     categoryStrategies,
-    classifier: {
-      enabled: true,
-      model: classifierModel,
-      method: "auto" as const,
-    },
+    classifier,
     models,
-    rules: DEFAULT_RULES,
-    ...(discovery ? { discovery } : {}),
+    rules: existingConfig?.rules ?? DEFAULT_RULES,
+    ...(existingConfig?.subscriptionGuard ? { subscriptionGuard: existingConfig.subscriptionGuard } : {}),
+    ...(existingConfig?.cache ? { cache: existingConfig.cache } : {}),
+    ...(existingConfig?.reliability ? { reliability: existingConfig.reliability } : {}),
+    ...(existingConfig?.debug ? { debug: existingConfig.debug } : {}),
+    ...(existingConfig?.keys ? { keys: existingConfig.keys } : {}),
+    ...(existingConfig?.tierHeuristics ? { tierHeuristics: existingConfig.tierHeuristics } : {}),
+    ...(existingConfig?.thinking ? { thinking: existingConfig.thinking } : {}),
+    ...(existingConfig?.quotaRouting ? { quotaRouting: existingConfig.quotaRouting } : {}),
+    ...(existingConfig?.strictCategories ? { strictCategories: existingConfig.strictCategories } : {}),
+    ...(discovery ? { discovery } : existingConfig?.discovery ? { discovery: existingConfig.discovery } : {}),
   };
 }
 
@@ -417,7 +435,9 @@ async function refreshAndDiscover(
 function writeAndReloadConfig(config: BifrostConfig, state: BifrostState): void {
   const dir = getAgentDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "bifrost.json"), JSON.stringify(config, null, 2));
+  const configPath = join(dir, "bifrost.json");
+  if (existsSync(configPath)) copyFileSync(configPath, join(dir, "bifrost.bak"));
+  writeFileSync(configPath, JSON.stringify(config, null, 2));
 
   const settingsPath = join(dir, "settings.json");
   const settings = existsSync(settingsPath) ? readJson<JsonRecord>(settingsPath) : undefined;
@@ -559,6 +579,15 @@ async function handleInit(
 
   const models: Record<string, string[]> = {};
 
+  // Build a reverse lookup of existing model classifications to preserve them.
+  const existingTierOf = new Map<string, string>();
+  for (const [tier, keys] of Object.entries(state.config.models ?? {})) {
+    const tierKeys = Array.isArray(keys) ? keys : typeof keys === "string" ? [keys] : [];
+    for (const k of tierKeys) existingTierOf.set(k, tier);
+  }
+
+  const newModels: Array<{ key: string; model: typeof available[0]; suggested: string }> = [];
+
   for (const m of available) {
     const key = `${m.provider}/${m.id}`;
 
@@ -570,9 +599,57 @@ async function handleInit(
       if (!working) continue; // known-broken, silently skip
     }
 
-    const tier = guessTier(m);
-    models[tier] = models[tier] ?? [];
-    models[tier].push(key);
+    const existingTier = existingTierOf.get(key);
+    if (existingTier) {
+      // Preserve existing classification — do not reclassify.
+      models[existingTier] = models[existingTier] ?? [];
+      if (!models[existingTier].includes(key)) models[existingTier].push(key);
+    } else {
+      // New model — collect for interactive placement.
+      newModels.push({ key, model: m, suggested: guessTier(m) });
+    }
+  }
+
+  // Prompt user for each new model's category, or fall back to guessTier.
+  if (newModels.length > 0) {
+    const allTiers = [...new Set([...Object.keys(models), "quick", "general", "coding", "writing", "frontier", "ultra"])];
+    if (ctx.hasUI) {
+      log(ctx, `${newModels.length} new model(s) found \u2014 select categories for each.`);
+      for (const entry of newModels) {
+        // Multi-select categories (same UX as add-model).
+        const selectedCategories = new Set<string>();
+        while (true) {
+          const menuOptions = allTiers.map((cat) => {
+            const checked = selectedCategories.has(cat) ? "[x]" : "[ ]";
+            const hint = cat === entry.suggested ? " (suggested)" : "";
+            return `${checked} ${cat}${hint}`;
+          });
+          menuOptions.push("[Done]");
+          const choice = await ctx.ui.select(
+            `Categories for ${entry.key} (chosen: ${selectedCategories.size}):`,
+            menuOptions,
+          );
+          if (!choice || choice === "[Done]") break;
+          const catName = choice.slice(4).replace(" (suggested)", "");
+          if (selectedCategories.has(catName)) selectedCategories.delete(catName);
+          else selectedCategories.add(catName);
+        }
+        const placements = selectedCategories.size > 0 ? selectedCategories : new Set([entry.suggested]);
+        for (const tier of placements) {
+          models[tier] = models[tier] ?? [];
+          models[tier].push(entry.key);
+        }
+      }
+    } else {
+      // Non-interactive: use guessTier default.
+      for (const entry of newModels) {
+        models[entry.suggested] = models[entry.suggested] ?? [];
+        models[entry.suggested].push(entry.key);
+      }
+      log(ctx, `${newModels.length} new model(s) auto-classified (non-interactive).`);
+    }
+  } else {
+    log(ctx, "All discovered models already classified \u2014 no changes needed.");
   }
 
   // Order every tier: non-free by probe duration, then free by collection rank.
@@ -605,7 +682,7 @@ async function handleInit(
   const discoveryMetadata = discovery
     ? buildDiscoveryMetadata(discovery.sourceModels, includedKeys)
     : undefined;
-  const proposal = buildInitProposal(models, classifierModel, state.extensionDir, discoveryMetadata);
+  const proposal = buildInitProposal(models, classifierModel, state.extensionDir, discoveryMetadata, state.config);
 
   const totalAssigned = Object.values(models).reduce((s, v) => s + v.length, 0);
 
@@ -748,6 +825,49 @@ async function handleDiscoveryReconcile(
   const current = readJson<BifrostConfig>(configPath) ?? state.config;
   
   const diff = reconcileDiscoveredModels(current, discovery, selected, verifiedKeys);
+
+  // Interactive multi-category placement for newly discovered models.
+  if (diff.added.length > 0 && ctx.hasUI) {
+    const allCategories = [...new Set([...Object.keys(diff.config.models ?? {}), "quick", "general", "coding", "writing", "frontier", "ultra"])];
+    log(ctx, `${diff.added.length} new model(s) found — select categories for each.`);
+    for (const entry of diff.added) {
+      // Remove the auto-classified placement first.
+      const autoModels = diff.config.models?.[entry.tier];
+      if (Array.isArray(autoModels)) {
+        const idx = autoModels.indexOf(entry.model);
+        if (idx >= 0) autoModels.splice(idx, 1);
+      }
+
+      // Multi-select categories (same UX as add-model).
+      const selectedCategories = new Set<string>();
+      while (true) {
+        const menuOptions = allCategories.map((cat) => {
+          const checked = selectedCategories.has(cat) ? "[x]" : "[ ]";
+          const hint = cat === entry.tier ? " (suggested)" : "";
+          return `${checked} ${cat}${hint}`;
+        });
+        menuOptions.push("[Done]");
+        const choice = await ctx.ui.select(
+          `Categories for ${entry.model} (chosen: ${selectedCategories.size}):`,
+          menuOptions,
+        );
+        if (!choice || choice === "[Done]") break;
+        const catName = choice.slice(4).replace(" (suggested)", "");
+        if (selectedCategories.has(catName)) selectedCategories.delete(catName);
+        else selectedCategories.add(catName);
+      }
+
+      // Fall back to auto-classified tier if user selected nothing.
+      const placements = selectedCategories.size > 0 ? selectedCategories : new Set([entry.tier]);
+      for (const cat of placements) {
+        const models = diff.config.models ?? {};
+        if (!Array.isArray(models[cat])) models[cat] = models[cat] ? [models[cat] as string] : [];
+        if (!(models[cat] as string[]).includes(entry.model)) (models[cat] as string[]).push(entry.model);
+      }
+      // Update the diff entry to reflect all chosen tiers.
+      entry.tier = [...placements].join(", ");
+    }
+  }
 
   // Order every tier: non-free by probe duration, then free by collection rank.
   const freeKeys = new Set((discovery.sourceModels.free ?? []).map((m) => `${m.provider}/${m.id}`));

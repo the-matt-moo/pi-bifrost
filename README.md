@@ -45,8 +45,8 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Classifier auth | Manual provider auth resolution | Classifier and probe streams run through `ctx.modelRegistry.streamSimple()`, so provider credentials resolve through the host registry (OAuth, env, stored keys) instead of a bespoke auth lookup |
 | Self-correction | Static cache, no feedback | Demotion tracking on manual overrides; cache entries auto-escalate tier after 3 demotions |
 | Cold start | Empty cache → every prompt hits LLM | Cache warm-start seeds entries from regex rules on first use |
-| Category taxonomy | `quick`/`general`/`frontier` | Adds a dedicated `coding` category (implementation, debugging, refactoring, tests, code review, codebase investigation, typing/error handling, API integration); `general` is now a non-specialized catch-all with no development regex rules of its own |
-| Category strictness | All categories fall back to `default` when unhealthy/unavailable | `strictCategories` (default `["coding"]`) exposes the unavailable/unhealthy result instead of silently switching to an unapproved cross-category model; eligibility comes only from explicit `models.coding` patterns, never `guessTier`/cost/context discovery |
+| Category taxonomy | `quick`/`general`/`frontier` | Adds a dedicated `coding` category (implementation, debugging, refactoring, tests, code review, codebase investigation, typing/error handling, API integration); adds an `ultra` tier for `/ultra`-pinned or explicitly configured top-capability models; `general` is now a non-specialized catch-all with no development regex rules of its own |
+| Category strictness | All categories fall back to `default` when unhealthy/unavailable | `strictCategories` (default `["coding", "ultra"]`) exposes the unavailable/unhealthy result instead of silently switching to an unapproved cross-category model; eligibility comes only from explicit `models.coding`/`models.ultra` patterns, never `guessTier`/cost/context discovery |
 | Routing intent conflicts | Stale cache/session tier and complexity heuristics could override a same-turn regex match | A configured-category regex match in the current turn beats a conflicting stale cache/session tier and skips the complexity shortcut entirely |
 | Subscription guard | Not available | Redirects OpenRouter model IDs by prefix (e.g. `{"openai/": "openai-codex"}`) to subscription providers when available and within quota |
 
@@ -85,7 +85,7 @@ Bifrost: <tier> → <model> (<source>; N skipped)
 ```
 
 - `Bifrost` renders in a rainbow gradient.
-- `<tier>` is colored by tier: quick (green), general (cyan), writing (blue), coding (magenta), frontier (orange).
+- `<tier>` is colored by tier: quick (green), general (cyan), writing (blue), coding (magenta), frontier (orange), ultra (default).
 - `→` is white.
 - `<model>` (provider/name, e.g. `openrouter/tencent/hy3`) is violet.
 - the trailing `(source; N skipped)` note is grey.

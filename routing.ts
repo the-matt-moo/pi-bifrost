@@ -861,7 +861,7 @@ const DEFAULT_FRONTIER_PARAM_THRESHOLD = 70;
 const DEFAULT_QUICK_PATTERN = "\\b(haiku|flash|mini|nano|lite|small|edge)\\b";
 const DEFAULT_FRONTIER_PATTERN = "\\b(o[134]|opus|sonnet|gpt-[456]|gemini-.*-pro|deepseek-(v[34]|r1)|qwen-(max|plus))\\b";
 
-export type BifrostTier = "frontier" | "general" | "writing" | "quick";
+export type BifrostTier = "ultra" | "frontier" | "general" | "writing" | "quick";
 
 /** Extracts numerical parameter count (in billions) from a model ID, e.g. 70b -> 70, 2.4t -> 2400. */
 export function extractParamCount(id: string): number | undefined {
