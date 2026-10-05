@@ -486,6 +486,7 @@ async function classifyWithSubprocess(
     "--no-extensions",
     "--no-prompt-templates",
     "--no-context-files",
+    "--no-tools",
     "--no-approve",
     "--no-session",
     "--print",

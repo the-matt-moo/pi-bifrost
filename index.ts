@@ -205,7 +205,12 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   }
   const cacheEntries = loadCache(cacheFilePath);
   const reliabilityStore = new ReliabilityStore({ cwd: process.cwd(), config: config.reliability });
-  const quotaStore = new QuotaStore(config.quotaRouting);
+  let activeContext: ExtensionContext | undefined;
+  const quotaStore = new QuotaStore(
+    config.quotaRouting,
+    undefined,
+    async (provider) => activeContext?.modelRegistry.getProviderAuth(provider),
+  );
   let runtimeStateFile = runtimeStatePath(process.cwd());
   let runtimeState: RuntimeModeState = loadRuntimeState(runtimeStateFile, {
     ...DEFAULT_RUNTIME_STATE,
@@ -227,7 +232,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   const sessionContext = new SessionRoutingContext();
   let lastRoutedPrompt: string | undefined;
   let pipeline: ClassificationPipeline | undefined;
-  let activeContext: ExtensionContext | undefined;
   let startupValidated = false;
   const warnedPatterns = new Set<string>();
   const classifierCooldowns = new Map<string, number>();

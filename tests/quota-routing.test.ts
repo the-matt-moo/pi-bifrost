@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
@@ -57,6 +60,107 @@ function withRandom<T>(rand: number, fn: () => T): T {
 
 const NOW = 1_000_000_000_000;
 const FRESH = { gamma: 3, reservePercent: 0.03, staleMinutes: 15 };
+
+function codexToken(accountId: string): string {
+  const payload = Buffer.from(JSON.stringify({
+    "https://api.openai.com/auth": { chatgpt_account_id: accountId },
+  })).toString("base64url");
+  return `header.${payload}.signature`;
+}
+
+async function withIsolatedAuth(fn: (agentDir: string) => Promise<void>): Promise<void> {
+  const agentDir = mkdtempSync(join(tmpdir(), "bifrost-quota-"));
+  const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const oldToken = process.env.OPENAI_CODEX_TOKEN;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  delete process.env.OPENAI_CODEX_TOKEN;
+  try {
+    await fn(agentDir);
+  } finally {
+    if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    if (oldToken === undefined) delete process.env.OPENAI_CODEX_TOKEN;
+    else process.env.OPENAI_CODEX_TOKEN = oldToken;
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+}
+
+describe("QuotaStore Codex auth", () => {
+  it("uses host auth and never writes auth.json directly", async () => {
+    await withIsolatedAuth(async (agentDir) => {
+      const authPath = join(agentDir, "auth.json");
+      const initialAuth = JSON.stringify({
+        "openai-codex": { access: "stale", refresh: "leave-unchanged", expires: 1 },
+      }, null, 2);
+      writeFileSync(authPath, initialAuth, "utf8");
+
+      const token = codexToken("host-account");
+      const originalFetch = globalThis.fetch;
+      let authCalls = 0;
+      globalThis.fetch = async (input, init) => {
+        assert.equal(String(input), "https://chatgpt.com/backend-api/wham/usage");
+        const headers = new Headers(init?.headers);
+        assert.equal(headers.get("Authorization"), `Bearer ${token}`);
+        assert.equal(headers.get("ChatGPT-Account-ID"), "host-account");
+        return new Response(JSON.stringify({
+          rate_limit: { primary_window: { used_percent: 25, reset_after_seconds: 3600 } },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+
+      try {
+        const store = new QuotaStore({}, undefined, async (provider) => {
+          authCalls++;
+          assert.equal(provider, "openai-codex");
+          return { auth: { apiKey: token }, source: "OAuth" };
+        });
+        await store.refreshIfStale(1_000);
+        assert.equal(authCalls, 1);
+        assert.equal(store.getSnapshot().byProvider["openai-codex"]?.weeklyRemainingFraction, 0.75);
+        assert.equal(readFileSync(authPath, "utf8"), initialAuth);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  it("keeps OPENAI_CODEX_TOKEN as the explicit override", async () => {
+    await withIsolatedAuth(async () => {
+      const token = codexToken("env-account");
+      process.env.OPENAI_CODEX_TOKEN = token;
+      const originalFetch = globalThis.fetch;
+      let authCalls = 0;
+      globalThis.fetch = async (_input, init) => {
+        const headers = new Headers(init?.headers);
+        assert.equal(headers.get("Authorization"), `Bearer ${token}`);
+        assert.equal(headers.get("ChatGPT-Account-ID"), "env-account");
+        return new Response(JSON.stringify({
+          rate_limit: { primary_window: { used_percent: 0 } },
+        }), { status: 200, headers: { "Content-Type": "application/json" } });
+      };
+
+      try {
+        const store = new QuotaStore({}, undefined, async () => {
+          authCalls++;
+          return undefined;
+        });
+        await store.refreshIfStale(1_000);
+        assert.equal(authCalls, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  it("degrades to missing telemetry when host auth resolution fails", async () => {
+    await withIsolatedAuth(async () => {
+      const store = new QuotaStore({}, undefined, async () => {
+        throw new Error("refresh failed");
+      });
+      await assert.doesNotReject(store.refreshIfStale(1_000));
+      assert.deepEqual(store.getSnapshot(), { byProvider: {}, fetchedAt: 1_000 });
+    });
+  });
+});
 
 describe("QuotaStore refresh backoff", () => {
   it("backs off after an empty quota result", async () => {

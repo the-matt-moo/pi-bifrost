@@ -2,6 +2,16 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.15.2 - 05-10-2026
+
+### Changed
+- Resolve Codex quota authentication through Pi's model registry so OAuth refresh and credential persistence remain host-owned.
+- Disable tools in classifier subprocesses.
+- Update Pi SDK development dependencies to 1.0.4.
+
+### Fixed
+- Accept the `ultra` tier in the default-rule regression check.
+
 ## 4.15.1 - 04-10-2026
 
 ### Fixed

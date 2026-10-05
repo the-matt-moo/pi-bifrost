@@ -1,6 +1,7 @@
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { AuthResult } from "@earendil-works/pi-ai";
 import { join } from "node:path";
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 // ── Quota telemetry for subscription-aware routing ─────────────────
 //
@@ -42,7 +43,7 @@ export interface QuotaRoutingConfig {
   providers?: Record<string, ProviderQuota>;
 }
 
-// ── Credentials (mirrors model-usage-status.ts) ────────────────────
+// ── Credentials ───────────────────────────────────────────────────
 
 function getAuth(): Record<string, any> {
   try {
@@ -54,42 +55,31 @@ function getAuth(): Record<string, any> {
   }
 }
 
-async function getCodexAccess(): Promise<{ token: string; accountId: string | null } | null> {
-  if (process.env.OPENAI_CODEX_TOKEN) {
-    return { token: process.env.OPENAI_CODEX_TOKEN, accountId: null };
+type ProviderAuthGetter = (provider: string) => Promise<AuthResult | undefined>;
+
+function getCodexAccountId(token: string): string | null {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
+    const accountId = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
+    return typeof accountId === "string" && accountId.length > 0 ? accountId : null;
+  } catch {
+    return null;
   }
-  const auth = getAuth();
-  const codex = auth["openai-codex"];
-  if (!codex?.access) return null;
+}
 
-  let token = codex.access;
-  let accountId = codex.accountId ?? null;
+async function getCodexAccess(
+  getProviderAuth?: ProviderAuthGetter,
+): Promise<{ token: string; accountId: string | null } | null> {
+  const envToken = process.env.OPENAI_CODEX_TOKEN;
+  if (envToken) return { token: envToken, accountId: getCodexAccountId(envToken) };
+  if (!getProviderAuth) return null;
 
-  if (codex.expires && Date.now() >= codex.expires && codex.refresh) {
-    try {
-      const res = await fetch("https://auth.openai.com/oauth/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          grant_type: "refresh_token",
-          refresh_token: codex.refresh,
-          client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
-        }),
-      });
-      if (res.ok) {
-        const json = (await res.json()) as any;
-        token = json.access_token;
-        codex.access = json.access_token;
-        if (json.refresh_token) codex.refresh = json.refresh_token;
-        codex.expires = Date.now() + json.expires_in * 1000;
-        try {
-          writeFileSync(join(getAgentDir(), "auth.json"), JSON.stringify(auth, null, 2));
-        } catch {}
-      }
-    } catch {}
+  try {
+    const token = (await getProviderAuth("openai-codex"))?.auth.apiKey;
+    return token ? { token, accountId: getCodexAccountId(token) } : null;
+  } catch {
+    return null;
   }
-
-  return { token, accountId };
 }
 
 function getAntigravityToken(): string | null {
@@ -101,8 +91,10 @@ function getAntigravityToken(): string | null {
 
 // ── Fetchers ───────────────────────────────────────────────────────
 
-async function fetchCodexQuota(): Promise<ProviderQuota | undefined> {
-  const creds = await getCodexAccess();
+async function fetchCodexQuota(
+  getProviderAuth?: ProviderAuthGetter,
+): Promise<ProviderQuota | undefined> {
+  const creds = await getCodexAccess(getProviderAuth);
   if (!creds?.token) return undefined;
   try {
     const res = await fetch("https://chatgpt.com/backend-api/wham/usage", {
@@ -266,14 +258,15 @@ export class QuotaStore {
 
   constructor(
     cfg: QuotaRoutingConfig | undefined,
-    fetchQuotas: QuotaFetcher = () => Promise.all([
-      fetchCodexQuota(),
-      fetchAntigravityQuota(),
-      fetchAnthropicQuota(),
-    ]),
+    fetchQuotas?: QuotaFetcher,
+    getProviderAuth?: ProviderAuthGetter,
   ) {
     this.cfg = cfg;
-    this.fetchQuotas = fetchQuotas;
+    this.fetchQuotas = fetchQuotas ?? (() => Promise.all([
+      fetchCodexQuota(getProviderAuth),
+      fetchAntigravityQuota(),
+      fetchAnthropicQuota(),
+    ]));
   }
 
   getSnapshot(): QuotaSnapshot {

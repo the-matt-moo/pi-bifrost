@@ -110,7 +110,7 @@ describe("commands helpers", () => {
 
   describe("DEFAULT_RULES", () => {
     it("routes only to known tiers", () => {
-      const known = new Set(["quick", "general", "writing", "coding", "frontier"]);
+      const known = new Set(["quick", "general", "writing", "coding", "frontier", "ultra"]);
       for (const rule of DEFAULT_RULES) {
         assert(known.has(rule.model), `rule routes to unknown tier ${rule.model}`);
       }
