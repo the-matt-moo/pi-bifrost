@@ -301,7 +301,9 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     removedScopedModelKeys: new Set(),
     refreshRegistry: (ctx) => refreshRegistry(
       state,
-      () => ctx.modelRegistry.refresh(),
+      () => typeof ctx.modelRegistry?.refresh === "function"
+        ? ctx.modelRegistry.refresh()
+        : Promise.resolve(),
       invalidatePipeline,
     ),
     scheduleCacheSave: cacheWriter.schedule,
@@ -609,6 +611,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
     if (!startupValidated && state.enabled) {
       startupValidated = true;
+      await state.refreshRegistry(ctx);
       for (const [tier, patterns] of Object.entries(state.config.models ?? {})) {
         const { unresolved } = diagnoseCandidates(ctx, patterns);
         for (const p of unresolved) {

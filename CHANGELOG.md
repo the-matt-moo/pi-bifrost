@@ -2,6 +2,11 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.15.3 - 07-10-2026
+
+### Fixed
+- Await registry refresh before startup candidate model validation to prevent spurious unresolvable-model warnings on session reload for dynamic provider models.
+
 ## 4.15.2 - 05-10-2026
 
 ### Changed
