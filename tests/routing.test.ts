@@ -302,14 +302,14 @@ describe("routing", () => {
       assert.equal(result.fallbackReason, "all_tiers_exhausted");
     });
 
-    it("filters session-exhausted models for non-quick tiers but not quick", () => {
+    it("filters sessions over 95% used for every tier", () => {
       const drained = makeModel("anthropic", "claude-opus", 15);
       const healthy = makeModel("openai-codex", "codex", 15);
       const ctx = makeCtx([drained, healthy]);
       const now = Date.UTC(2026, 0, 1, 12, 0, 0);
       const quota = {
         byProvider: {
-          anthropic: { weeklyRemainingFraction: 0.5, sessionRemainingFraction: 0.05 },
+          anthropic: { weeklyRemainingFraction: 0.5, sessionRemainingFraction: 0.04 },
           "openai-codex": { weeklyRemainingFraction: 0.5, sessionRemainingFraction: 0.5 },
         },
         fetchedAt: now,
@@ -335,8 +335,8 @@ describe("routing", () => {
         quotaConfig,
         now,
       });
-      assert.equal(modelKey(quick.selected), "anthropic/claude-opus");
-      assert.equal(quick.skipped.length, 0);
+      assert.equal(modelKey(quick.selected), "openai-codex/codex");
+      assert.equal(quick.skipped[0]?.reason, "session_exhausted");
     });
   });
 
@@ -432,17 +432,15 @@ describe("routing", () => {
     });
   });
 
-  it("reuses pre-resolved candidates without rescanning registry", () => {
+  it("intersects supplied candidates with configured patterns and Pi scope", () => {
     const candidate = makeModel("anthropic", "claude-sonnet", 3);
-    const ctx = {
-      modelRegistry: {
-        getAvailable: () => { throw new Error("unexpected registry scan"); },
-      },
-    } as never;
+    const fable = makeModel("anthropic", "claude-fable", 3);
+    const ctx = makeCtx([candidate, fable]);
+    ctx.scopedModels = [{ model: candidate, thinkingLevel: "off" }];
     const result = resolveModelWithFallback(ctx, {
       requestedTier: "general",
       requestedPattern: "anthropic/claude-sonnet",
-      requestedCandidates: [candidate],
+      requestedCandidates: [fable, candidate],
       requestedStrategy: "first",
     });
     assert.equal(result.selected, candidate);

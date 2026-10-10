@@ -64,8 +64,8 @@ echo 'scenario 1: pass'
 # Verify server still alive
 curl -sf "http://127.0.0.1:$port/_stats" >/dev/null || { echo 'FAIL: server died after scenario 1' >&2; exit 1; }
 
-# ── Scenario 2: quota (429) opens circuit and retries on a healthy model ──
-echo '--- scenario 2: quota auto-retry ---'
+# ── Scenario 2: quota (429) opens circuit and continues on a healthy model ──
+echo '--- scenario 2: quota continuation ---'
 rm -f "$work/.pi/bifrost-reliability.json"
 cat >"$work/bifrost.json" <<'EOF'
 {"enabled":true,"default":"economical","strategy":"cheapest","classifier":{"enabled":false},"reliability":{"failureThreshold":1,"windowMinutes":5,"cooldownMinutes":60,"autoRetry":true,"maxAutoRetries":2},"models":{"economical":["fake/quota","fake/healthy"]},"rules":[{"pattern":"quota","model":"economical"}]}
@@ -77,7 +77,7 @@ prompt "$sid" quota
 poll_until "$work/.pi/bifrost-reliability.json" 'fake/quota'
 grep -q 'openUntil' "$work/.pi/bifrost-reliability.json" || { echo 'FAIL: quota circuit not open' >&2; exit 1; }
 wait_model_attempts_gt healthy "$healthy_before"
-"$A" --session "$sid" wait 'auto-retrying on fake/healthy' --assert --timeout 15000 >/dev/null
+"$A" --session "$sid" wait 'continuing on fake/healthy' --assert --timeout 15000 >/dev/null
 echo 'scenario 2: pass'
 "$A" --json sessions cleanup --all --yes >/dev/null 2>&1||true; "$A" --json daemon stop --force --yes >/dev/null 2>&1||true
 curl -sf "http://127.0.0.1:$port/_stats" >/dev/null || { echo 'FAIL: server died after scenario 2' >&2; exit 1; }

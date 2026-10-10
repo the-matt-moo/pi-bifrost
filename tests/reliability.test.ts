@@ -201,6 +201,14 @@ describe("reliability", () => {
     assert.equal(circuit.recentFailures, 1);
   });
 
+  it("uses the full cooldown for credits_required rather than transient 429 cooldown", () => {
+    const cfg = { ...DEFAULT_RELIABILITY, cooldownMinutes: 60 };
+    const t0 = Date.UTC(2026, 0, 1, 12, 0, 0);
+    const key = "anthropic/fable";
+    const state = recordModelFailure(emptyReliabilityState(), key, cfg, t0, "agent_settled", "429 credits_required");
+    assert.equal(state.models[key]?.openUntil, t0 + 60 * 60_000);
+  });
+
   it("opens circuit immediately on HTTP 5xx error", () => {
     const cfg = { ...DEFAULT_RELIABILITY, failureThreshold: 3, windowMinutes: 5, cooldownMinutes: 60 };
     const key = "openrouter/test/model";

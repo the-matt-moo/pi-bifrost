@@ -2,6 +2,18 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.15.4 - 09-10-2026
+
+### Fixed
+- Enforce configured category and Pi scope for exhaustion handoffs, healthy-model resolution, supplied candidates, and subscription redirects; never re-inject drained pools or retry across categories.
+- Hand off rolling sessions strictly over 95% used, including quick and pinned/manual runs, and refresh quota between tool turns before another request. Prefer native models, then configured same-category OpenRouter except ultra; preserve image capability and stop on empty pools or failed switches.
+- Track pinned/manual provider failures and use bounded finalized-boundary continuations with a one-shot in-memory branch digest, preserving completed work without replaying prompts or tool effects.
+- Treat exact credits_required rejection as terminal before Pi's outer 429 retries through supported message replacement; retain the original error and ordinary transient retry behavior.
+- Separate Codex primary session and secondary weekly windows, honor explicit window durations, cap refresh intervals at freshness expiry, and await input telemetry.
+
+### Changed
+- Require and test against Pi 1.1.0. Document retry boundaries and the separate competing-router incident diagnosis.
+
 ## 4.15.3 - 07-10-2026
 
 ### Fixed

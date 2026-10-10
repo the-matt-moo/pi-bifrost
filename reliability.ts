@@ -143,7 +143,7 @@ export function isAccountLevelLimit(reason: string): boolean {
 }
 
 export function isRetryableProviderLimit(reason: string): boolean {
-  return /\b429\b|\b50[234]\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)|quota_exceeded|rate_limit|insufficient.*(?:quota|balance|credit)|temporarily overloaded|overloaded|service unavailable/i.test(reason);
+  return /\b429\b|\b50[234]\b|resourceexhausted|rate.?limit|quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)|quota_exceeded|credits_required|rate_limit|insufficient.*(?:quota|balance|credit)|temporarily overloaded|overloaded|service unavailable/i.test(reason);
 }
 
 /** Transient provider/model failures that are safe to retry without treating them as limits. */
@@ -175,7 +175,7 @@ export function recordModelFailure(
   const current = state.models[model] ?? { failures: [] };
   const wasTrial = current.trialActive;
   const explicitCooldown = parseCooldownFromReason(reason);
-  const isQuota = /quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)/i.test(reason);
+  const isQuota = /credits_required|insufficient.*(?:quota|balance|credit)|quota (?:reached|exceeded|exhausted)|usage limit|limit (?:reached|exceeded)/i.test(reason);
   const rateLimited = !isQuota && isTransientProviderLimit(reason);
   const multiplier = rateLimited ? (current.cooldownMultiplier ?? 1) : (wasTrial ? (current.cooldownMultiplier ?? 1) * 2 : (current.cooldownMultiplier ?? 1));
   const cooldownMs = explicitCooldown ?? (rateLimited ? TRANSIENT_LIMIT_COOLDOWN_MS : resolved.cooldownMinutes * 60_000 * multiplier);

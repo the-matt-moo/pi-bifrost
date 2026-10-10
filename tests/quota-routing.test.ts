@@ -14,7 +14,7 @@ import {
   selectWeighted,
   subscriptionWeights,
 } from "../routing.ts";
-import { QuotaStore, type QuotaSnapshot } from "../quota.ts";
+import { parseCodexQuota, QuotaStore, type QuotaSnapshot } from "../quota.ts";
 
 function model(provider: string, id: string, cost = 1): Model<Api> {
   return {
@@ -115,7 +115,7 @@ describe("QuotaStore Codex auth", () => {
         });
         await store.refreshIfStale(1_000);
         assert.equal(authCalls, 1);
-        assert.equal(store.getSnapshot().byProvider["openai-codex"]?.weeklyRemainingFraction, 0.75);
+        assert.equal(store.getSnapshot().byProvider["openai-codex"]?.sessionRemainingFraction, 0.75);
         assert.equal(readFileSync(authPath, "utf8"), initialAuth);
       } finally {
         globalThis.fetch = originalFetch;
@@ -162,7 +162,34 @@ describe("QuotaStore Codex auth", () => {
   });
 });
 
+describe("Codex quota windows", () => {
+  it("separates session primary from weekly secondary", () => {
+    assert.deepEqual(parseCodexQuota({ rate_limit: {
+      primary_window: { used_percent: 96, reset_after_seconds: 3600 },
+      secondary_window: { used_percent: 20, reset_after_seconds: 7200 },
+    } }), { sessionRemainingFraction: 0.04, weeklyRemainingFraction: 0.8, hoursToReset: 2 });
+  });
+  it("honors explicit window durations rather than positional names", () => {
+    assert.deepEqual(parseCodexQuota({ rate_limit: {
+      primary_window: { used_percent: 25, limit_window_seconds: 604800 },
+      secondary_window: { used_percent: 95, limit_window_seconds: 18000 },
+    } }), { weeklyRemainingFraction: 0.75, hoursToReset: undefined, sessionRemainingFraction: 0.05 });
+    assert.equal(parseCodexQuota({ rate_limit: { primary_window: { used_percent: NaN } } }), undefined);
+  });
+});
+
 describe("QuotaStore refresh backoff", () => {
+  it("caps refresh at freshness expiry even with a longer configured refresh interval", async () => {
+    let calls = 0;
+    const store = new QuotaStore({ staleMinutes: 15, refreshMinutes: 30 }, async () => {
+      calls++;
+      return [{ sessionRemainingFraction: 0.04 }, undefined, undefined];
+    });
+    await store.refreshIfStale(1000);
+    await store.refreshIfStale(1000 + 15 * 60_000);
+    assert.equal(calls, 2);
+    assert.equal(store.isFresh(1000 + 15 * 60_000), true);
+  });
   it("backs off after an empty quota result", async () => {
     let calls = 0;
     const store = new QuotaStore({ refreshMinutes: 30 }, async () => {
@@ -295,10 +322,10 @@ describe("subscriptionWeights", () => {
 });
 
 describe("filterSessionExhausted", () => {
-  it("removes subscription models under 10% session remaining for non-quick tiers", () => {
+  it("removes subscription models strictly below 5% session remaining", () => {
     const codex = model("openai-codex", "codex");
     const anthropic = model("anthropic", "claude");
-    const quota = sessionSnapshot(NOW, [["openai-codex", 0.5], ["anthropic", 0.05]]);
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.5], ["anthropic", 0.04]]);
 
     const res = filterSessionExhausted([codex, anthropic], quota, FRESH, NOW, "general");
     assert.equal(res.candidates.length, 1);
@@ -307,7 +334,7 @@ describe("filterSessionExhausted", () => {
     assert.equal(res.skipped[0]?.reason, "session_exhausted");
   });
 
-  it("keeps near-drained session models for the quick tier", () => {
+  it("keeps exactly 95% used at the boundary for the quick tier", () => {
     const codex = model("openai-codex", "codex");
     const anthropic = model("anthropic", "claude");
     const quota = sessionSnapshot(NOW, [["openai-codex", 0.5], ["anthropic", 0.05]]);
@@ -347,14 +374,26 @@ describe("filterSessionExhausted", () => {
     assert.equal(stale.candidates.length, 2);
   });
 
-  it("never removes all candidates", () => {
+  it("returns an empty pool when every session is exhausted", () => {
     const codex = model("openai-codex", "codex");
     const anthropic = model("anthropic", "claude");
-    const quota = sessionSnapshot(NOW, [["openai-codex", 0.05], ["anthropic", 0.02]]);
+    const quota = sessionSnapshot(NOW, [["openai-codex", 0.04], ["anthropic", 0.02]]);
 
     const res = filterSessionExhausted([codex, anthropic], quota, FRESH, NOW, "general");
-    assert.equal(res.candidates.length, 2);
-    assert.equal(res.skipped.length, 0);
+    assert.equal(res.candidates.length, 0);
+    assert.equal(res.skipped.length, 2);
+  });
+});
+
+describe("quota exclusion invariants", () => {
+  for (const enabled of [true, false]) it(`returns final filtered healthy candidates with reliability enabled=${enabled}`, () => {
+    const drained = model("anthropic", "opus");
+    const ctx = { modelRegistry: { find: () => drained, getAvailable: () => [drained] } } as any;
+    const result = resolveHealthyModel(ctx, "anthropic/opus", "subscription_preferred", { version: 1, models: {} }, { enabled }, NOW,
+      snapshot(NOW, [["anthropic", 0]]), FRESH);
+    assert.equal(result.selected, undefined);
+    assert.deepEqual(result.healthyCandidates, []);
+    assert.equal(result.skipped[0]?.reason, "quota_exhausted");
   });
 });
 
@@ -513,7 +552,7 @@ describe("selectModel subscription_preferred", () => {
   });
 });
 
-describe("resolveHealthyModel guards subscription strategy", () => {
+describe("resolveHealthyModel never re-injects exhausted subscriptions", () => {
   function ctx(models: ReturnType<typeof model>[]) {
     return {
       modelRegistry: {
@@ -524,7 +563,7 @@ describe("resolveHealthyModel guards subscription strategy", () => {
     } as any;
   }
 
-  it("re-injects subscription models when session filter removes them under subscription_preferred", () => {
+  it("respects session exclusions under subscription_preferred", () => {
     const codex = model("openai-codex", "gpt");
     const or = model("openrouter", "deepseek");
     // Codex session at 5% — below default 10% reserve, so filterSessionExhausted removes it.
@@ -538,13 +577,11 @@ describe("resolveHealthyModel guards subscription strategy", () => {
       quota, { ...FRESH, sessionReservePercent: 0.10 },
       undefined, "general",
     );
-    // Without the guard, OpenRouter would win because codex is filtered out.
-    // With the guard, codex is re-injected and subscription_preferred picks it.
-    assert.equal(result.selected?.provider, "openai-codex",
-      "subscription_preferred should still select subscription model even when session-near-exhausted");
+    assert.equal(result.selected?.provider, "openrouter");
+    assert.deepEqual(result.healthyCandidates, [or]);
   });
 
-  it("re-injects subscription models when session filter removes them under subscription_balance", () => {
+  it("respects session exclusions under subscription_balance", () => {
     const codex = model("openai-codex", "gpt");
     const antigravity = model("antigravity", "gemini");
     const or = model("openrouter", "deepseek");
@@ -558,11 +595,11 @@ describe("resolveHealthyModel guards subscription strategy", () => {
       quota, { ...FRESH, sessionReservePercent: 0.10 },
       undefined, "general",
     );
-    assert.notEqual(result.selected?.provider, "openrouter",
-      "subscription_balance should not fall through to paid-credit when subscription models exist");
+    assert.equal(result.selected?.provider, "openrouter");
+    assert.deepEqual(result.healthyCandidates, [or]);
   });
 
-  it("does not re-inject for non-subscription strategies", () => {
+  it("respects the same exclusions for non-subscription strategies", () => {
     const codex = model("openai-codex", "gpt");
     const or = model("openrouter", "deepseek");
     const quota = sessionSnapshot(NOW, [["openai-codex", 0.05]]);

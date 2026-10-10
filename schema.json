@@ -239,8 +239,8 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Fraction of the rolling session allowance below which a model is treated as exhausted for every tier except quick (default 0.10, i.e. over 90% used).",
-          "default": 0.10
+          "description": "Fraction of the rolling session allowance below which a model is exhausted for every tier, including quick (default 0.05: strictly over 95% used). Exactly 95% is allowed with this default.",
+          "default": 0.05
         },
         "gamma": {
           "type": "number",
@@ -257,8 +257,8 @@
         "refreshMinutes": {
           "type": "number",
           "minimum": 1,
-          "description": "Minimum interval between background quota refreshes (minutes, default 30).",
-          "default": 30
+          "description": "Quota refresh interval (minutes, default 15), capped by staleMinutes. Multi-turn runs refresh between tool turns to detect newly exhausted sessions.",
+          "default": 15
         },
         "providers": {
           "type": "object",

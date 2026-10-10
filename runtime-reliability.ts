@@ -14,7 +14,7 @@ function modelKey(message: AssistantOutcome): string | undefined {
   return `${message.provider}/${message.model}`;
 }
 
-/** Tracks one Bifrost-routed agent run across Pi's internal retries. */
+/** Tracks routed and pinned/manual agent runs across Pi's internal retries. */
 export interface RuntimeRetryContext {
   prompt: string;
   images?: ImageContent[];
@@ -35,6 +35,9 @@ export class RuntimeReliabilityTracker {
   private retry: RuntimeRetryContext | undefined;
   private hadAssistantOutput = false;
   private hadToolResults = false;
+
+  isTracking(): boolean { return this.selectedModel !== undefined; }
+  getRetryContext(): RuntimeRetryContext | undefined { return this.retry; }
 
   begin(selectedModel: string, retry?: RuntimeRetryContext): void {
     this.selectedModel = selectedModel;

@@ -40,16 +40,16 @@ import {
   billingClass,
   diagnoseCandidates,
   applySubscriptionGuard,
-  findOneModel,
+  configuredCategory,
   getStrategy,
   guessTier,
   isProviderQuotaExhausted,
+  isProviderSessionExhausted,
   modelKey,
   resolveModelWithFallback,
   resolveHealthyModel,
   retryUnavailableResolution,
   scopedCandidates,
-  selectComparableAvailableModel,
   selectImageCapableModelFromGroups,
   supportsImageInput,
 } from "./routing.js";
@@ -68,6 +68,7 @@ import {
   classifierModelMissing,
 } from "./diagnostics.js";
 import { RuntimeReliabilityTracker } from "./runtime-reliability.js";
+import { CONTINUATION, completedTools, createHandoff, isCreditsRequired, selectHandoffModel } from "./handoff.ts";
 import { handleRpcRequest } from "./rpc.js";
 import { assessThinking, capThinkingLevel, clampToModel, compareThinkingLevels, ThinkingSession, type ThinkingDecision, type ThinkingLevel } from "./thinking.ts";
 import { SessionRoutingContext } from "./session-context.js";
@@ -229,6 +230,40 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   let settlingModel: string | undefined;
   const thinkingSession = new ThinkingSession();
   const runtimeReliability = new RuntimeReliabilityTracker();
+  let pendingHandoff: { target: string; content: string } | undefined;
+
+  function branch(ctx: ExtensionContext) {
+    const activeBranch = ctx.sessionManager?.getBranch?.() ?? [];
+    // Honor branch-relative redactions and compaction; never resurrect omitted raw history.
+    const projection = ctx.sessionManager?.buildSessionProjection?.();
+    return projection ? projection.messages.map((message) => ({ type: "message" as const, message })) : activeBranch;
+  }
+
+  function hasImages(ctx: ExtensionContext): boolean {
+    return branch(ctx).some((entry) => entry.type === "message" && "content" in entry.message && Array.isArray(entry.message.content)
+      && entry.message.content.some((block) => block.type === "image"));
+  }
+
+  async function switchForHandoff(ctx: ExtensionContext, current: Model<Api>, tier: string | undefined, images: boolean): Promise<Model<Api> | undefined> {
+    const next = selectHandoffModel(ctx, state.config, current, tier, state.reliabilityStore.getState(), quotaStore.getSnapshot(), images);
+    if (!next || !tier) return undefined;
+    const document = createHandoff(branch(ctx), modelKey(current), modelKey(next), tier);
+    selfSelecting = true;
+    let ok = false;
+    try { ok = await pi.setModel(next); } catch { /* handled below */ }
+    // A host may not emit model_select for a no-op or failed selection.
+    selfSelecting = false;
+    if (!ok) {
+      state.reliabilityStore.recordFailure(modelKey(next), "setModel", "handoff model switch failed");
+      return undefined;
+    }
+    pendingHandoff = { target: modelKey(next), content: document };
+    state.modelCategory = tier;
+    state.pinned = false;
+    state.saveModeState();
+    syncBifrostModeStatus(ctx, state);
+    return next;
+  }
   const sessionContext = new SessionRoutingContext();
   let lastRoutedPrompt: string | undefined;
   let pipeline: ClassificationPipeline | undefined;
@@ -638,13 +673,65 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     runtimeReliability.observe(event.messages);
   });
 
-  pi.on("before_agent_start", async (event) => {
+  pi.on("turn_start", async (event, ctx) => {
+    if (!state.enabled || !ctx.model) return;
+    // Tools can spend quota between requests; a cached pre-input snapshot is insufficient.
+    await quotaStore.refreshIfStale(Date.now(), event.turnIndex > 0);
+    const quota = quotaStore.getSnapshot();
+    if (!isProviderSessionExhausted(ctx.model, quota, state.config.quotaRouting)
+      && !isProviderQuotaExhausted(ctx.model, quota, state.config.quotaRouting)) return;
+    const retry = runtimeReliability.getRetryContext();
+    const tier = configuredCategory(ctx, ctx.model, state.config.models, retry?.tier ?? state.modelCategory);
+    if ((retry?.autoRetryCount ?? 0) >= (state.config.reliability?.maxAutoRetries ?? 2)
+      || !completedTools(branch(ctx).flatMap((entry) => "message" in entry ? [entry.message] : []))) {
+      ctx.abort();
+      pendingHandoff = undefined;
+      log(ctx, "Bifrost: exhausted during this run; stopped at the request boundary. Review unfinished work before continuing.", "warning");
+      return;
+    }
+    const next = await switchForHandoff(ctx, ctx.model, tier, !!retry?.images?.length || hasImages(ctx));
+    if (!next || !tier) {
+      ctx.abort();
+      pendingHandoff = undefined;
+      log(ctx, "Bifrost: exhausted during this run; no healthy configured/scoped same-category replacement. Stopped without replay.", "warning");
+      return;
+    }
+    runtimeReliability.begin(modelKey(next), { prompt: retry?.prompt ?? "", images: retry?.images, tier, autoRetryCount: (retry?.autoRetryCount ?? 0) + 1 });
+    log(ctx, `Bifrost: session exhaustion handoff to ${modelKey(next)} in ${tier}; completed tools preserved.`, "warning");
+  });
+
+  pi.on("context", async (event, ctx) => {
+    const handoff = pendingHandoff;
+    pendingHandoff = undefined;
+    if (!handoff || handoff.target !== modelKey(ctx.model)) return;
+    return { messages: [...event.messages, { role: "custom" as const, customType: "bifrost-handoff", content: handoff.content, display: false, timestamp: Date.now() }] };
+  });
+
+  pi.on("message_end", async (event) => {
+    const message = event.message;
+    if (!state.enabled || message.role !== "assistant") return;
+    // Pi 1.1.0 recognizes billing as terminal before its outer HTTP-429 retry loop.
+    if (message.stopReason === "error" && isCreditsRequired(message.errorMessage ?? "")) {
+      const terminal = { ...message, errorMessage: `billing exhaustion (credits_required): ${message.errorMessage}` };
+      runtimeReliability.observe([terminal]);
+      return { message: terminal };
+    }
+    runtimeReliability.observe([message]);
+  });
+
+  pi.on("before_agent_start", async (event, ctx) => {
     if (!state.enabled) return;
+    if (ctx.model && !runtimeReliability.isTracking()) {
+      const tier = configuredCategory(ctx, ctx.model, state.config.models, state.modelCategory);
+      runtimeReliability.begin(modelKey(ctx.model), tier ? { prompt: event.prompt, images: event.images, tier, autoRetryCount: 0 } : undefined);
+    }
     const systemPrompt = frontierSystemPrompt(event.systemPrompt, state.modelCategory);
     return systemPrompt ? { systemPrompt } : undefined;
   });
 
   pi.on("session_shutdown", async () => {
+    pendingHandoff = undefined;
+    runtimeReliability.settle();
     cleanupSessionState();
   });
 
@@ -655,104 +742,43 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     thinkingSession.noteTurnOutcome(failed, errored);
   });
 
-  pi.on("agent_settled", async (_event, ctx) => {
+  pi.on("agent_before_settle", async (event, ctx) => {
     setBifrostSilent(ctx, state.silent || isChildSession(ctx));
     const settled = runtimeReliability.settle();
     if (!settled || !state.enabled || state.config.reliability?.enabled === false) return;
-    // Policy A: failure logged, clean settle silent (trial-only success).
-    // Intentional — normal routing produces no log noise.
     state.reliabilityStore.recordSettled(settled.model, settled.reason);
     if (!settled.reason) return;
 
-    const httpMatch = settled.reason.match(/\b([45]\d{2})\b/);
-    const detail = httpMatch ? `HTTP ${httpMatch[1]}; ` : "";
     const retry = settled.retry;
-    const retryableLimit = isRetryableProviderLimit(settled.reason);
-    const retryableProviderError = isRetryableProviderError(settled.reason);
-    const retryableFailure = retryableLimit || retryableProviderError;
-    const autoRetry = state.config.reliability?.autoRetry ?? true;
-    const maxAutoRetries = state.config.reliability?.maxAutoRetries ?? 2;
-    if (
-      !autoRetry ||
-      !retry ||
-      !settled.replaySafe ||
-      !retryableFailure ||
-      retry.autoRetryCount >= maxAutoRetries
-    ) {
-      // Auto-unpin on retryable provider limits so next prompt routes to a
-      // healthy model instead of hitting the same wall.
-      if (state.pinned && retryableLimit) {
-        state.pinned = false;
-        state.saveModeState();
-        syncBifrostModeStatus(ctx, state);
-        log(ctx, `Bifrost: ${settled.model} is rate-limited (${detail}circuit opened); auto-unpinned to allow routing to a healthy model.`, "warning");
-        return;
-      }
-      const why = retryableFailure && !settled.replaySafe
-        ? " automatic retry skipped because the failed turn produced output or tool results."
-        : " next prompt routes to the next healthy model in its tier.";
-      log(ctx, `Bifrost: provider failure for ${settled.model} (${detail}circuit opened);${why}`, "warning");
+    const retryable = isCreditsRequired(settled.reason) || isRetryableProviderLimit(settled.reason) || isRetryableProviderError(settled.reason);
+    const max = state.config.reliability?.maxAutoRetries ?? 2;
+    // A finalized boundary proves tools finished; never restart the user's prompt.
+    const safe = event.outcome !== "aborted" && event.context?.pendingMessages.length === 0
+      && !!ctx.sessionManager?.getBranch && completedTools(event.context.contextMessages);
+    if (!retryable || !retry || !(state.config.reliability?.autoRetry ?? true) || retry.autoRetryCount >= max || !safe
+      || modelKey(ctx.model) !== settled.model || !ctx.model) {
+      log(ctx, `Bifrost: provider failure for ${settled.model}; stopped. Review the current branch before continuing; the prompt was not replayed.`, "warning");
       return;
     }
-
-    const tier = retry.tier;
-    const failedSlash = settled.model.indexOf("/");
-    const failedProvider = failedSlash > 0 ? settled.model.slice(0, failedSlash) : undefined;
-    const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
-    const defaultTier = state.config.default;
-    let candidates = diagnoseCandidates(ctx, inferPattern(ctx, tier)).candidates;
-    // On provider rate-limit or quota failure, avoid retrying the same provider if alternatives exist
-    if (failedProvider && candidates.some((m) => m.provider !== failedProvider)) {
-      candidates = candidates.filter((m) => m.provider !== failedProvider);
-    }
-    const resolved = resolveModelWithFallback(ctx, {
-      requestedTier: tier,
-      requestedPattern: candidates.map(modelKey),
-      requestedCandidates: candidates,
-      requestedStrategy: strategy,
-      defaultTier,
-      defaultPattern: defaultTier ? inferPattern(ctx, defaultTier) : undefined,
-      defaultStrategy: defaultTier
-        ? getStrategy(state.config.categoryStrategies, state.config.strategy, defaultTier)
-        : strategy,
-      reliabilityState: state.reliabilityStore.getState(),
-      reliabilityConfig: state.config.reliability,
-      quota: quotaStore.getSnapshot(),
-      quotaConfig: state.config.quotaRouting,
-      strict: isStrictCategory(state.config, tier),
-    });
-    const next = resolved.selected;
+    await quotaStore.refreshIfStale(Date.now());
+    const next = await switchForHandoff(ctx, ctx.model, retry.tier, !!retry.images?.length || hasImages(ctx));
     if (!next) {
-      log(ctx, `Bifrost: provider failure for ${settled.model} (${detail}circuit opened); no healthy retry model is available.`, "warning");
+      log(ctx, `Bifrost: ${settled.model} failed; no healthy configured/scoped same-category handoff could be selected. Stopped without replay.`, "warning");
       return;
     }
+    runtimeReliability.begin(modelKey(next), { ...retry, autoRetryCount: retry.autoRetryCount + 1 });
+    log(ctx, `Bifrost: continuing on ${modelKey(next)} in ${retry.tier} (${retry.autoRetryCount + 1}/${max}); completed work preserved.`, "warning");
+    // Only this fixed marker persists. The Markdown handoff is request-local, in memory.
+    return { entries: [{ type: "custom_message" as const, customType: "bifrost-continuation", content: CONTINUATION, display: false }], continue: true };
+  });
 
-    const nextKey = modelKey(next);
-    selfSelecting = true;
-    let switched = false;
-    let switchError: unknown;
-    try {
-      switched = await pi.setModel(next);
-    } catch (err) {
-      switchError = err;
+  pi.on("agent_settled", async (_event, ctx) => {
+    const settled = runtimeReliability.settle();
+    if (settled && state.enabled && state.config.reliability?.enabled !== false) {
+      state.reliabilityStore.recordSettled(settled.model, settled.reason);
     }
-    if (!switched) {
-      selfSelecting = false;
-      const diagnostic = parseSetModelError(switchError, nextKey);
-      state.reliabilityStore.recordFailure(nextKey, "setModel", diagnostic.message);
-      log(ctx, `Bifrost: retry model switch failed: ${formatDiagnostic(diagnostic)}`, "error");
-      return;
-    }
-
-    state.modelCategory = resolved.selectedTier ?? tier;
+    pendingHandoff = undefined;
     syncBifrostModeStatus(ctx, state);
-    const nextRetry = { ...retry, autoRetryCount: retry.autoRetryCount + 1 };
-    runtimeReliability.begin(nextKey, nextRetry);
-    const replayContent = retry.images?.length
-      ? [...(retry.prompt ? [{ type: "text" as const, text: retry.prompt }] : []), ...retry.images]
-      : retry.prompt;
-    log(ctx, `Bifrost: ${settled.model} was rate-limited; auto-retrying on ${nextKey} (${nextRetry.autoRetryCount}/${maxAutoRetries}).`, "warning");
-    pi.sendUserMessage(replayContent, { deliverAs: "followUp" });
   });
 
   pi.on("thinking_level_select", async (event, ctx) => {
@@ -796,13 +822,15 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     if (ctx.model && state.config.subscriptionGuard) {
       const redirect = applySubscriptionGuard(ctx.model, state.config.subscriptionGuard);
       if (redirect) {
-        const target = findOneModel(ctx, redirect);
+        const tier = configuredCategory(ctx, ctx.model, state.config.models, state.modelCategory);
+        const target = tier ? resolveHealthyModel(ctx, state.config.models?.[tier], "first",
+          state.reliabilityStore.getState(), state.config.reliability, Date.now(), quotaStore.getSnapshot(),
+          state.config.quotaRouting, scopedCandidates(ctx, redirect).filter((m) => !hasImages(ctx) || supportsImageInput(m)), tier).selected : undefined;
         if (target) {
           const now = Date.now();
           const quota = quotaStore.getSnapshot();
           const weeklyExhausted = isProviderQuotaExhausted(target, quota, state.config.quotaRouting, now);
-          const sessionRemaining = quota?.byProvider[target.provider]?.sessionRemainingFraction;
-          const sessionExhausted = typeof sessionRemaining === "number" && sessionRemaining <= 0;
+          const sessionExhausted = isProviderSessionExhausted(target, quota, state.config.quotaRouting, now);
           if (weeklyExhausted || sessionExhausted) {
             debug("bifrost", "subscription_guard_skipped", {
               from: selectedModel, to: redirect,
@@ -837,17 +865,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     sessionContext.reset();
     state.pinned = true;
     // Determine which category (quick, general, writing, frontier, coding) the selected model belongs to
-    state.modelCategory = undefined;
-    if (ctx.model && state.config.models) {
-      const selectedKey = modelKey(ctx.model);
-      for (const [category, models] of Object.entries(state.config.models)) {
-        const modelKeys = Array.isArray(models) ? models : [models];
-        if (modelKeys.some(m => m === selectedKey)) {
-          state.modelCategory = category;
-          break;
-        }
-      }
-    }
+    state.modelCategory = ctx.model ? configuredCategory(ctx, ctx.model, state.config.models) : undefined;
     state.saveModeState();
     debug("bifrost", "model_select", { model: selectedModel });
     syncBifrostModeStatus(ctx, state);
@@ -904,49 +922,31 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       ? { action: "transform" as const, text: promptText }
       : { action: "continue" as const };
 
-    if (state.pinned) {
-      const now = Date.now();
-      await quotaStore.refreshIfStale(now);
-      const current = ctx.model;
-      const quota = quotaStore.getSnapshot();
-      if (current && isProviderQuotaExhausted(current, quota, state.config.quotaRouting, now)) {
-        const tier = guessTier(current, state.config.tierHeuristics);
-        const pool = ctx.scopedModels && ctx.scopedModels.length > 0
-          ? ctx.scopedModels.map(({ model }) => model)
-          : ctx.modelRegistry.getAvailable();
-        const replacement = selectComparableAvailableModel(
-          current,
-          pool,
-          getStrategy(state.config.categoryStrategies, state.config.strategy, tier),
-          quota,
-          state.config.quotaRouting,
-          now,
-          state.config.tierHeuristics,
-        );
-        if (replacement) {
-          selfSelecting = true;
-          let switched = false;
-          try {
-            switched = await pi.setModel(replacement);
-          } catch (err) {
-            debug("input", "exhausted_pin_switch_failed", { model: modelKey(replacement), error: String(err) });
-          }
-          if (switched) {
-            state.pinned = false;
-            state.saveModeState();
-            syncBifrostModeStatus(ctx, state);
-            log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit; unpinned and switched to comparable ${modelKey(replacement)}.`, "warning");
-            return defaultAction;
-          }
-          selfSelecting = false;
-          log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit, but switching to ${modelKey(replacement)} failed; pin retained.`, "error");
-        } else {
-          log(ctx, `Bifrost: ${modelKey(current)} reached its usage limit; no comparable scoped model with available quota was found, so the pin was retained.`, "warning");
-        }
+    const now = Date.now();
+    await quotaStore.refreshIfStale(now);
+    const current = ctx.model;
+    const quota = quotaStore.getSnapshot();
+    const currentTier = current && configuredCategory(ctx, current, state.config.models, state.modelCategory);
+    // An explicit new category is user routing, not an exhaustion retry of the old category.
+    if (current && (!forcedTier || forcedTier === currentTier)
+      && (isProviderQuotaExhausted(current, quota, state.config.quotaRouting, now)
+        || isProviderSessionExhausted(current, quota, state.config.quotaRouting, now))) {
+      const tier = currentTier;
+      const replacement = await switchForHandoff(ctx, current, tier, !!event.images?.length || hasImages(ctx));
+      if (!replacement || !tier) {
+        log(ctx, `Bifrost: ${modelKey(current)} exhausted; no safe configured/scoped same-category replacement. Stopped; selection unchanged.`, "warning");
+        return { action: "handled" };
       }
+      runtimeReliability.begin(modelKey(replacement), { prompt: promptText, images: event.images, tier, autoRetryCount: 0 });
+      log(ctx, `Bifrost: ${modelKey(current)} exhausted; handoff to ${modelKey(replacement)} in ${tier}.`, "warning");
+      return defaultAction;
+    }
 
+    if (state.pinned) {
       if (!forcedTier && !sessionContext.isClearlyUnrelated(promptText)) {
-        sessionContext.record(ctx.model ? guessTier(ctx.model, state.config.tierHeuristics) : (state.config.default ?? "general"), promptText);
+        const tier = ctx.model && configuredCategory(ctx, ctx.model, state.config.models, state.modelCategory);
+        if (ctx.model) runtimeReliability.begin(modelKey(ctx.model), tier ? { prompt: promptText, images: event.images, tier, autoRetryCount: 0 } : undefined);
+        sessionContext.record(tier ?? state.config.default ?? "general", promptText);
         debug("input", "bypass", { enabled: true, pinned: true });
         syncBifrostModeStatus(ctx, state);
         log(ctx, formatBifrostRouting("", modelKey(ctx.model), "", true));
@@ -1009,7 +1009,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         sessionContext.record(classification.tier, promptText);
       }
 
-      void quotaStore.refreshIfStale(Date.now());
+      await quotaStore.refreshIfStale(Date.now());
 
       endClassify({ kind: classification.kind, tier: classification.kind !== "unclassified" ? classification.tier : undefined });
       uiDone(ctx);
@@ -1090,7 +1090,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const retryContext = {
         prompt: promptText,
         images: event.images ? [...event.images] : undefined,
-        tier,
+        tier: selectedTier,
         autoRetryCount: 0,
       };
 
@@ -1109,7 +1109,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         log(ctx, `Bifrost: tier "${tier}" matched but no healthy model available${why}`, "warning");
         syncBifrostModeStatus(ctx, state);
         endInput();
-        return defaultAction;
+        return { action: "handled" };
       }
 
       if (
@@ -1193,7 +1193,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         syncBifrostModeStatus(ctx, state);
         log(ctx, `Bifrost: ${formatDiagnostic(diagnostic)}`, "error");
         endInput({ model: modelKey(model), ok: false });
-        return defaultAction;
+        return { action: "handled" };
       }
 
       applyThinking();

@@ -29,10 +29,10 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Model selection strategy | `first`, `cheapest`, `random`, `largest_context` | Adds `subscription_balance` (10% tolerance) and `subscription_preferred` (subscription > free > unknown > paid-credit); opted-in categories balance weekly allowances within 10% of each other |
 | Credit spend policy | All candidates equally eligible | Both `subscription_balance` and `subscription_preferred` partition candidates by billing class: subscription models with usable weekly quota are always tried first via weighted random; paid-credit (OpenRouter) models are only reached when every subscription candidate is drained below `reservePercent` or absent |
 | Model discovery | Probes all Pi models | Adds `--scoped` (Pi enabled-models only, always included when requested regardless of discovery errors) and `--free` (top 5 OpenRouter free models by collection ranking, or top 5 fastest if ranking fetch fails) flags for `init` and `update`; `update --free` enforces the same cap |
-| Candidate scoping | Full registry | Classifier model lookup and tier inference filter candidates to Pi's scoped-model selection when active, gracefully falling back to all registry models in unscoped and subagent sessions |
+| Candidate scoping | Full registry | Shared healthy-model resolution intersects configured candidates with Pi's scope, including caller-supplied candidates; handoffs never infer models from the registry |
 | Image prompts | Routed like text-only prompts | Prefers vision-capable models; if the selected tier cannot take images, Bifrost falls back to higher tiers with image support |
 | Pin quota safety | Manual pin remains until explicitly removed | A pinned model that returns a 429 or rate-limit error is auto-unpinned immediately so the next prompt routes to a healthy model; quota-exhausted models are also unpinned proactively before the request; classified switches auto-pin to prevent context-loss churn |
-| Reliability | Threshold-based circuit breaker | Any final runtime provider error immediately opens that model's circuit (including `ResourceExhausted`, `MALFORMED_FUNCTION_CALL`, 502/503/504, and overload errors); parses explicit wait times into exact cooldowns, tracks account-level limits across providers, and auto-retries across alternative tier providers |
+| Reliability | Threshold-based circuit breaker | Final runtime errors open the circuit, including pinned/manual runs; bounded same-category continuations preserve completed work without prompt replay, prefer native providers, and use configured scoped OpenRouter only outside ultra |
 | Stale-registry warnings | Warning shown on stale host registry | A strict-tier "no healthy model" warning is re-checked after a single registry refresh before being shown; the warning appears only when the tier is genuinely unavailable due to circuits or quota exhaustion. Session-start candidate validation also awaits a registry refresh so dynamic provider models aren't flagged as spuriously unresolvable on reload |
 | Config reconciliation | `init` only | Adds `/bifrost update --scoped/--free` to preview and merge discovery results while preserving manual entries |
 | Silent mode | Not available | `/bifrost silence` / `unsilence` suppresses console and UI output without disabling routing |
@@ -168,7 +168,19 @@ Run once after install:
 /bifrost init
 ```
 
-This probes every model you have access to, finds which ones respond, and writes a config. Thinking-only models are probed with minimal thinking. Successful probe results are reused for one hour; pass `--force` to retest immediately. Bifrost routes prompts from that point forward. If a selected model ends with a provider error, Bifrost opens its circuit immediately; replay-safe rate-limit, overload, and transient 502/503/504 failures can automatically retry on the next healthy model.
+This probes every model you have access to, finds which ones respond, and writes a config. Thinking-only models are probed with minimal thinking. Successful probe results are reused for one hour; pass `--force` to retest immediately. Bifrost routes prompts from that point forward. Final provider failures open the circuit. With `reliability.autoRetry` enabled, retryable failures can request a bounded **continuation**, not replay the original user prompt.
+
+### Exhaustion handoff (Pi 1.1.0+)
+
+Fresh rolling-session usage **strictly over 95%** triggers a handoff, including `quick` and pinned/manual runs. Exactly 95% remains usable by default; `quotaRouting.sessionReservePercent` can explicitly set a higher reserve. Weekly quota is a separate signal. Quotas are awaited before input routing and refreshed between tool turns, so a running task can switch before its next request. Drained pools are never repopulated.
+
+Handoffs select only models configured in the **same category and Pi scope**: healthy native providers first, then configured OpenRouter models, except **ultra**, which never hands off to OpenRouter. Image-bearing context requires image-capable replacements. No replacement or failed switch stops safely; the exhausted model is not silently reused.
+
+A bounded Markdown digest of the active session branch is built in memory and injected once through Pi's request-local `context` event. Completed tool results and the existing session remain intact. After an error, Pi's finalized `agent_before_settle` boundary requests one continuation only when all issued tools have finalized results, no queued input competes, and the model still matches the tracked run. Uncertain side effects stop with guidance. `reliability.maxAutoRetries` bounds continuations; no user-prompt or tool-side-effect replay is sent.
+
+Exact `credits_required` errors are normalized through the supported `message_end` replacement API with a host-recognized terminal billing prefix, preserving the original error, role, and content. This prevents Pi 1.1.0's **outer** three 429 retries; ordinary transient 429 handling is unchanged. Provider-internal retries before a finalized message are outside this hook. `ctx.abort()` is used to stop exhausted requests without replacements, not to recover credit errors: abort cancels the host's continuation boundary too.
+
+Only a fixed continuation instruction is persisted, never the Markdown digest. Disable competing automatic model-switching extensions and restart/reload idle sessions before relying on category-scoped handoffs. See [incident diagnosis and host boundaries](docs/credit-required-handoff.md).
 
 If `/bifrost init` has not been run, Bifrost auto-derives tier candidates at runtime from the live registry using `guessTier`. This works but skips probe-based ordering and quota preferences. Run `/bifrost init` for stable, reproducible routing.
 
@@ -351,7 +363,7 @@ Redirect OpenRouter models to subscription providers to avoid paying credit fees
 }
 ```
 
-If the target subscription provider is exhausted (session or weekly quota), the redirect is skipped and OpenRouter selection stands.
+The redirect must be configured in the selected category, inside Pi's scope, healthy, and image-capable when needed. If the target subscription provider is exhausted (session or weekly quota), the redirect is skipped and OpenRouter selection stands.
 
 `fallbackToRegex: false` skips tier regex fallback after classifier failure or rejection; direct model-reference rules still short-circuit before classification.
 

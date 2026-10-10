@@ -66,6 +66,7 @@ function harness() {
     isIdle: () => true,
     ui: new Proxy({ notify: (m) => notices.push(m), theme: { fg: (_c, s) => s } }, { get: (t, k) => t[k] ?? (() => {}) }),
     session: { custom: {} },
+    sessionManager: { getBranch: () => [] },
     modelRegistry: {
       getAvailable: () => models,
       find: (provider, id) => models.find((model) => model.provider === provider && model.id === id),
@@ -99,7 +100,7 @@ describe("category slash commands", () => {
     assert.ok(!notices.some((n) => /classify:/.test(n)));
   });
 
-  it("queues a fallback replay after agent_settled", async () => {
+  it("requests same-category continuation before settlement without replay", async () => {
     const { handlers, commands, deliveries, ctx } = harness();
     await commands.get("frontier").handler("retry me", ctx);
     await handlers.get("input")({ text: "retry me", source: "extension" }, ctx);
@@ -113,12 +114,10 @@ describe("category slash commands", () => {
         errorMessage: "429: temporarily rate-limited upstream",
       }],
     }, ctx);
-    await handlers.get("agent_settled")({}, ctx);
-
+    const result = await handlers.get("agent_before_settle")({ outcome: "error", context: { pendingMessages: [], contextMessages: [] } }, ctx);
     assert.equal(ctx.model.id, "g");
-    assert.deepEqual(deliveries.at(-1), {
-      text: "retry me",
-      options: { deliverAs: "followUp" },
-    });
+    assert.equal(result.continue, true);
+    assert.match(result.entries[0].content, /do not repeat completed tool calls/);
+    assert.equal(deliveries.length, 1, "only the explicit category command sends the user prompt");
   });
 });

@@ -223,11 +223,7 @@ function selectSubscriptionFirst(
  * the model is assumed usable (conservative: prefer attempting a
  * subscription over prematurely falling to credits).
  *
- * Session quota is intentionally NOT checked here — it is already
- * handled upstream by filterSessionExhausted + guardSubscriptionStrategy.
- * Re-checking it here would defeat the guard's re-injection of
- * near-drained subscription models that should still be preferred
- * over paid-credit.
+ * Session exhaustion is a hard exclusion, including for direct strategy callers.
  */
 function hasUsableQuota(
   model: Model<Api>,
@@ -249,7 +245,7 @@ function hasUsableQuota(
     return false;
   }
 
-  return true;
+  return !isProviderSessionExhausted(model, quota, cfg, now);
 }
 
 export function selectModel(
@@ -477,6 +473,32 @@ export function isProviderQuotaExhausted(
   return typeof remaining === "number" && remaining <= (quotaConfig?.reservePercent ?? 0.03);
 }
 
+export function isProviderSessionExhausted(
+  model: Model<Api>,
+  quota: QuotaSnapshot | undefined,
+  quotaConfig: QuotaRoutingConfig | undefined,
+  now = Date.now(),
+): boolean {
+  if (!quota || now - quota.fetchedAt >= (quotaConfig?.staleMinutes ?? 15) * 60_000) return false;
+  const remaining = getModelQuota(model, quota)?.sessionRemainingFraction;
+  return typeof remaining === "number" && (remaining <= 0 || remaining < (quotaConfig?.sessionReservePercent ?? 0.05));
+}
+
+/** Explicit configured membership only; never infer an exhaustion category from registry metadata. */
+export function configuredCategory(
+  ctx: ExtensionContext,
+  model: Model<Api>,
+  models: Record<string, string | string[]> | undefined,
+  preferred?: string,
+): string | undefined {
+  const categories = Object.keys(models ?? {});
+  if (preferred && categories.includes(preferred)) {
+    categories.splice(categories.indexOf(preferred), 1);
+    categories.unshift(preferred);
+  }
+  return categories.find((tier) => scopedCandidates(ctx, models?.[tier]).some((m) => modelKey(m) === modelKey(model)));
+}
+
 /** Pick another scoped model in the same capability tier with measured quota available. */
 export function selectComparableAvailableModel(
   current: Model<Api>,
@@ -500,7 +522,7 @@ export function selectComparableAvailableModel(
 
 /** Remove models from providers whose weekly quota is exhausted.
  *  Only applies when quota telemetry is fresh (within staleMinutes).
- *  Never removes ALL candidates — that would deadlock the user. */
+ *  An empty healthy pool must stop, not re-enter an exhausted model. */
 export function filterQuotaExhausted(
   candidates: Model<Api>[],
   quota: QuotaSnapshot | undefined,
@@ -514,7 +536,6 @@ export function filterQuotaExhausted(
   const reserve = quotaConfig?.reservePercent ?? 0.03;
   const skipped: SkippedCandidate[] = [];
   const filtered = candidates.filter((model) => {
-    if (billingClass(model) !== "subscription") return true;
     const remaining = getModelQuota(model, quota)?.weeklyRemainingFraction;
     // No data: keep the model (conservative — unmeasured means unblocked)
     if (typeof remaining !== "number") return true;
@@ -525,50 +546,27 @@ export function filterQuotaExhausted(
     return true;
   });
 
-  // Don't starve the user — keep at least one candidate
-  if (filtered.length === 0) return { candidates, skipped: [] };
   return { candidates: filtered, skipped };
 }
 
-/** Remove models from providers whose rolling session allowance is near-exhausted.
- *  Only applies when session telemetry is fresh (within staleMinutes). The `quick`
- *  tier is exempt from the near-exhausted reserve — short requests can still
- *  squeeze through a nearly-drained session — but a fully-drained (0%) session
- *  is a guaranteed 429 for every tier, so it is always blocked.
- *  Never removes ALL candidates — that would deadlock the user. */
+/** Hard session exclusion for every category, including quick. Never re-inject drained models. */
 export function filterSessionExhausted(
   candidates: Model<Api>[],
   quota: QuotaSnapshot | undefined,
   quotaConfig: QuotaRoutingConfig | undefined,
   now: number,
-  tier?: string,
+  _tier?: string,
 ): { candidates: Model<Api>[]; skipped: SkippedCandidate[] } {
   if (!quota) return { candidates, skipped: [] };
   const fresh = now - quota.fetchedAt < (quotaConfig?.staleMinutes ?? 15) * 60_000;
   if (!fresh) return { candidates, skipped: [] };
 
-  const reserve = quotaConfig?.sessionReservePercent ?? 0.10;
   const skipped: SkippedCandidate[] = [];
   const filtered = candidates.filter((model) => {
-    if (billingClass(model) !== "subscription") return true;
-    const remaining = getModelQuota(model, quota)?.sessionRemainingFraction;
-    // No session data: keep the model (unmeasured means unblocked)
-    if (typeof remaining !== "number") return true;
-    // 0% remaining is a hard block for every tier; no request squeezes through.
-    if (remaining <= 0) {
-      skipped.push({ key: modelKey(model), reason: "session_exhausted" });
-      return false;
-    }
-    // Near-exhausted sessions are tolerated only for `quick`.
-    if (tier !== "quick" && remaining < reserve) {
-      skipped.push({ key: modelKey(model), reason: "session_exhausted" });
-      return false;
-    }
-    return true;
+    if (!isProviderSessionExhausted(model, quota, quotaConfig, now)) return true;
+    skipped.push({ key: modelKey(model), reason: "session_exhausted" });
+    return false;
   });
-
-  // Don't starve the user — keep at least one candidate
-  if (filtered.length === 0) return { candidates, skipped: [] };
   return { candidates: filtered, skipped };
 }
 
@@ -590,37 +588,6 @@ export interface RoutedModelResolution {
   fallback?: HealthyModelResolution;
 }
 
-/**
- * When a subscription_* strategy is active, ensure at least one subscription
- * model survives filtering.  The quota/session filters only remove subscription
- * models (paid-credit passes unconditionally), so they can strip every
- * subscription candidate while leaving OpenRouter — which defeats the strategy.
- *
- * If filtering removed all subscription models but the pre-filter set had some,
- * re-inject the subscription models so the strategy can rank them properly.
- * The strategy's own weighting (subscriptionWeights) already deprioritises
- * drained providers, so keeping them in the candidate list is safe — it just
- * prevents a hard cutover to paid-credit when the user explicitly asked for
- * subscription-first routing.
- */
-function guardSubscriptionStrategy(
-  filtered: Model<Api>[],
-  preFilter: Model<Api>[],
-  strategy: RoutingStrategy,
-): Model<Api>[] {
-  if (strategy !== "subscription_balance" && strategy !== "subscription_preferred") {
-    return filtered;
-  }
-  const hasSub = filtered.some((m) => billingClass(m) === "subscription");
-  if (hasSub) return filtered;
-
-  // All subscription models were removed by filters.  Re-inject them so the
-  // strategy can apply its own weighting instead of falling through to credits.
-  const subs = preFilter.filter((m) => billingClass(m) === "subscription");
-  if (subs.length === 0) return filtered;
-  return [...subs, ...filtered];
-}
-
 export function resolveHealthyModel(
   ctx: ExtensionContext,
   pattern: string | string[] | undefined,
@@ -633,15 +600,17 @@ export function resolveHealthyModel(
   resolvedCandidates?: readonly Model<Api>[],
   tier?: string,
 ): HealthyModelResolution {
-  const candidates = resolvedCandidates ? [...resolvedCandidates] : findCandidates(ctx, pattern);
+  const scoped = scopedCandidates(ctx, pattern);
+  const supplied = resolvedCandidates && new Set(resolvedCandidates.map(modelKey));
+  const candidates = supplied ? scoped.filter((m) => supplied.has(modelKey(m))) : scoped;
   if (!reliabilityState || reliabilityConfig?.enabled === false) {
     const quotaFiltered = filterQuotaExhausted(candidates, quota, quotaConfig, now);
     const sessionFiltered = filterSessionExhausted(quotaFiltered.candidates, quota, quotaConfig, now, tier);
-    const final = guardSubscriptionStrategy(sessionFiltered.candidates, candidates, strategy);
+    const final = sessionFiltered.candidates;
     return {
       selected: selectModel(final, strategy, quota, quotaConfig, now),
       candidates,
-      healthyCandidates: candidates,
+      healthyCandidates: final,
       skipped: [...quotaFiltered.skipped, ...sessionFiltered.skipped],
     };
   }
@@ -657,17 +626,16 @@ export function resolveHealthyModel(
     healthyCandidates.push(candidate);
   }
 
-  // Filter out models from providers with exhausted weekly quota.
-  // Guard: if all candidates would be removed, keep the original set.
+  // Quota exclusions remain excluded even when the entire pool is drained.
   const quotaFiltered = filterQuotaExhausted(healthyCandidates, quota, quotaConfig, now);
   const sessionFiltered = filterSessionExhausted(quotaFiltered.candidates, quota, quotaConfig, now, tier);
   const allSkipped = [...skipped, ...quotaFiltered.skipped, ...sessionFiltered.skipped];
-  const final = guardSubscriptionStrategy(sessionFiltered.candidates, healthyCandidates, strategy);
+  const final = sessionFiltered.candidates;
 
   return {
     selected: selectModel(final, strategy, quota, quotaConfig, now),
     candidates,
-    healthyCandidates,
+    healthyCandidates: final,
     skipped: allSkipped,
   };
 }
@@ -724,7 +692,7 @@ export function resolveModelWithFallback(
     ? "requested_tier_unavailable"
     : (primary.skipped.length > 0 ? "requested_tier_unhealthy" : undefined);
 
-  if (options.strict) {
+  if (options.strict || primary.skipped.some((item) => item.reason === "quota_exhausted" || item.reason === "session_exhausted")) {
     return {
       requestedTier: options.requestedTier,
       selected: undefined,

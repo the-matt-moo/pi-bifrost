@@ -31,13 +31,13 @@ export interface QuotaRoutingConfig {
   /** Fraction of weekly allowance treated as "exhausted" (default 0.03). */
   reservePercent?: number;
   /** Fraction of the rolling session allowance below which a model is treated
-   *  as exhausted for every tier except `quick` (default 0.10 — over 90% used). */
+   *  as exhausted for every tier (default 0.05 — strictly over 95% used). */
   sessionReservePercent?: number;
   /** Exponent shaping quota bias — higher favors the heavier side harder (default 3). */
   gamma?: number;
   /** Snapshot older than this is treated as no data (minutes, default 15). */
   staleMinutes?: number;
-  /** Minimum interval between background refreshes (minutes, default 30). */
+  /** Refresh interval (minutes, default 15), capped by staleMinutes. */
   refreshMinutes?: number;
   /** Static per-provider overrides; pinned values always win. */
   providers?: Record<string, ProviderQuota>;
@@ -109,17 +109,29 @@ async function fetchCodexQuota(
     });
     if (!res.ok) return undefined;
     const json = (await res.json()) as any;
-    const primary = json?.rate_limit?.primary_window;
-    if (typeof primary?.used_percent !== "number") return undefined;
-    const remaining = Math.max(0, (100 - primary.used_percent) / 100);
-    const hours =
-      typeof primary.reset_after_seconds === "number"
-        ? primary.reset_after_seconds / 3600
-        : undefined;
-    return { weeklyRemainingFraction: remaining, hoursToReset: hours };
+    return parseCodexQuota(json);
   } catch {
     return undefined;
   }
+}
+
+/** Codex primary is normally the 5-hour session; identify explicit durations when supplied. */
+export function parseCodexQuota(json: any): ProviderQuota | undefined {
+  const result: ProviderQuota = {};
+  for (const [name, window] of Object.entries(json?.rate_limit ?? {}) as [string, any][]) {
+    if (!name.endsWith("_window") || typeof window?.used_percent !== "number" || !Number.isFinite(window.used_percent)) continue;
+    const remaining = Math.max(0, Math.min(1, (100 - window.used_percent) / 100));
+    const weekly = typeof window.limit_window_seconds === "number"
+      ? window.limit_window_seconds >= 7 * 24 * 3600
+      : name === "secondary_window";
+    if (weekly) {
+      result.weeklyRemainingFraction = remaining;
+      result.hoursToReset = typeof window.reset_after_seconds === "number" ? window.reset_after_seconds / 3600 : undefined;
+    } else {
+      result.sessionRemainingFraction = remaining;
+    }
+  }
+  return Object.keys(result).length ? result : undefined;
 }
 
 async function fetchAntigravityQuota(): Promise<ProviderQuota | Record<string, ProviderQuota> | undefined> {
@@ -284,9 +296,9 @@ export class QuotaStore {
   }
 
   /** Refresh only when the snapshot is older than refreshMinutes or empty. Never throws. */
-  async refreshIfStale(now: number): Promise<void> {
-    const refresh = this.cfg?.refreshMinutes ?? 30;
-    if (this.snapshot.fetchedAt > 0 &&
+  async refreshIfStale(now: number, force = false): Promise<void> {
+    const refresh = Math.min(this.cfg?.refreshMinutes ?? 15, this.cfg?.staleMinutes ?? 15);
+    if (!force && this.snapshot.fetchedAt > 0 &&
         now - this.snapshot.fetchedAt < refresh * 60_000) {
       return;
     }
