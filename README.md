@@ -144,7 +144,7 @@ type ClassificationSource = "cache" | "classifier" | "regex" | "complexity" | "i
 
 ## Install
 
-> **Requires Pi 1.x** (tested with Pi 1.0.0).
+> **Requires Pi 1.1+** (tested with Pi 1.3.0).
 
 From npm (scoped):
 

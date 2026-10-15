@@ -723,7 +723,10 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     if (!state.enabled) return;
     if (ctx.model && !runtimeReliability.isTracking()) {
       const tier = configuredCategory(ctx, ctx.model, state.config.models, state.modelCategory);
-      runtimeReliability.begin(modelKey(ctx.model), tier ? { prompt: event.prompt, images: event.images, tier, autoRetryCount: 0 } : undefined);
+      const retry = tier && event.messageType !== "custom"
+        ? { prompt: event.prompt, images: event.images, tier, autoRetryCount: 0 }
+        : undefined;
+      runtimeReliability.begin(modelKey(ctx.model), retry);
     }
     const systemPrompt = frontierSystemPrompt(event.systemPrompt, state.modelCategory);
     return systemPrompt ? { systemPrompt } : undefined;

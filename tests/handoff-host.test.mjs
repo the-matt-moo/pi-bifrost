@@ -12,7 +12,7 @@ import { createAgentSession, DefaultResourceLoader, SessionManager, SettingsMana
 const root = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const bifrost = (await createJiti(import.meta.url).import(join(root, "index.ts"))).default;
 
-for (const mode of ["credits", "session", "no-replacement"]) it(`Pi 1.1.0 fake-provider ${mode} handoff retains completed tools without replay`, { timeout: 15000 }, async () => {
+for (const mode of ["credits", "session", "no-replacement"]) it(`Pi 1.3.0 fake-provider ${mode} handoff retains completed tools without replay`, { timeout: 15000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "bifrost-host-"));
   const savedDir = process.env.PI_CODING_AGENT_DIR;
   const savedToken = process.env.OPENAI_CODEX_TOKEN;

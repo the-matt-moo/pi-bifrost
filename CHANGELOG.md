@@ -2,6 +2,14 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.15.5 - 15-10-2026
+
+### Changed
+- Test development and fake-provider lifecycle compatibility against Pi 1.3.0 while retaining Pi 1.1.0 minimum compatibility; custom-triggered runs remain tracked without receiving user-prompt retry context.
+
+### Fixed
+- Exclude Hugging Face models from scoped discovery by provider metadata and base URL hostname.
+
 ## 4.15.4 - 09-10-2026
 
 ### Fixed

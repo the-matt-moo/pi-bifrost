@@ -65,6 +65,14 @@ describe("discovery sources", () => {
     assert.deepEqual(result.sourceModels.scoped?.map((entry) => `${entry.provider}/${entry.id}`), ["vendor/kept"]);
   });
 
+  it("excludes Hugging Face models from scoped discovery", () => {
+    const huggingFace = model("huggingface", "model", 1, "https://huggingface.co/v1");
+    const kept = model("vendor", "kept", 1);
+    const result = discoverModels(context([huggingFace, kept], [huggingFace, kept], [huggingFace, kept]), scopedOnly);
+    assert.deepEqual(result.candidates.map((entry) => `${entry.provider}/${entry.id}`), ["vendor/kept"]);
+    assert.deepEqual(result.sourceModels.scoped?.map((entry) => `${entry.provider}/${entry.id}`), ["vendor/kept"]);
+  });
+
   it("finds --free from provider and cost metadata without a fixed provider id", () => {
     const free = model("dynamic-provider", "current-free", 0);
     const paid = model("dynamic-provider", "paid", 1);

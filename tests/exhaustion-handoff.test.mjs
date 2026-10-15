@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,7 +70,7 @@ async function scenario(options, fn) {
   try {
     await handlers.get("session_start")({}, ctx);
     await handlers.get("model_select")({}, ctx); // manual pin
-    await fn({ handlers, ctx, input, failure, settle, switches, sent, branch, current, native, or, fable, statuses });
+    await fn({ handlers, ctx, input, failure, settle, switches, sent, branch, current, native, or, fable, statuses, dir });
   } finally {
     await handlers.get("session_shutdown")({}, ctx);
     if (oldDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldDir;
@@ -117,13 +117,30 @@ describe("exhaustion handoff runtime (fake registry/provider)", { concurrency: 1
       assert.equal(await settle(), undefined, "no failure means no repeated continuation");
     });
   });
-  it("tracks pinned/manual runs even when input routing was bypassed", async () => {
+  it("tracks explicit user runs even when input routing was bypassed", async () => {
     await scenario({}, async ({ handlers, ctx, failure, settle, native, sent }) => {
-      await handlers.get("before_agent_start")({ prompt: "finish unfinished work", systemPrompt: "test" }, ctx);
+      await handlers.get("before_agent_start")({ messageType: "user", prompt: "finish unfinished work", systemPrompt: "test" }, ctx);
       await failure();
       assert.equal((await settle()).continue, true);
       assert.equal(key(ctx.model), key(native));
       assert.equal(sent.length, 0);
+    });
+  });
+  it("tracks custom-triggered frontier runs without user retry context", async () => {
+    await scenario({ tier: "frontier" }, async ({ handlers, ctx, failure, settle, switches, sent, dir }) => {
+      const prepared = await handlers.get("before_agent_start")({
+        messageType: "custom",
+        message: { role: "custom", customType: "test-trigger", content: "continue", display: false, timestamp: 1 },
+        systemPrompt: "test",
+      }, ctx);
+      assert.match(prepared.systemPrompt, /^test\n\nBifrost frontier role:/);
+      await failure();
+      assert.equal(await settle(), undefined);
+      assert.deepEqual(switches, []);
+      assert.equal(sent.length, 0);
+      assert.equal(await handlers.get("context")({ messages: [] }, ctx), undefined);
+      const reliability = JSON.parse(readFileSync(join(dir, "bifrost-reliability.json"), "utf8"));
+      assert.equal(reliability.models[key(ctx.model)].lastFailureSource, "agent_settled");
     });
   });
   it("honors explicit new-category user overrides instead of treating them as old-category retries", async () => {

@@ -47,6 +47,17 @@ function isFreeModel(model: Model<Api>): boolean {
   return [...rates, ...tiers].every((rate) => rate === 0);
 }
 
+function isHuggingFaceModel(ctx: ExtensionContext, model: Model<Api>): boolean {
+  const provider = ctx.modelRegistry.getProviderDisplayName(model.provider);
+  let host = "";
+  try {
+    host = new URL(model.baseUrl).hostname;
+  } catch {
+    // Provider metadata remains the fallback.
+  }
+  return /hugging\s*face|huggingface/i.test(`${model.provider} ${provider}`) || /(?:^|\.)huggingface\.co$/i.test(host);
+}
+
 export function discoverModels(
   ctx: ExtensionContext,
   options: DiscoveryOptions,
@@ -72,6 +83,7 @@ export function discoverModels(
           return current;
         })
         .filter((model): model is Model<Api> => model !== undefined)
+        .filter((model) => !isHuggingFaceModel(ctx, model))
         .filter((model) => !excludedScopedModelKeys.has(modelKey(model)))
         .sort((a, b) => modelKey(a).localeCompare(modelKey(b)));
     }
