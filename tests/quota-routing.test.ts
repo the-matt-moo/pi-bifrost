@@ -615,4 +615,50 @@ describe("resolveHealthyModel never re-injects exhausted subscriptions", () => {
     assert.equal(result.selected?.provider, "openrouter",
       "non-subscription strategies should respect session filtering without guard");
   });
+
+  describe("subscription_smart strategy", () => {
+    it("prioritizes provider whose quota resets soonest when remaining is within tolerance", () => {
+      const codex = model("openai-codex", "gpt");
+      const ag = model("antigravity", "claude");
+      // Both providers have similar remaining quota (within 0.10 tolerance: 0.60 vs 0.58),
+      // but Codex resets in 2 hours while Antigravity resets in 48 hours.
+      const quota = snapshot(NOW, [["openai-codex", 0.60], ["antigravity", 0.58]], [2, 48]);
+      const picked = selectModel([ag, codex], "subscription_smart", quota, FRESH, NOW);
+      assert.equal(picked?.provider, "openai-codex", "soonest-resetting provider should be chosen");
+    });
+
+    it("falls back to weighted selection when reset hours differ by <= 1 hour", () => {
+      const codex = model("openai-codex", "gpt");
+      const ag = model("antigravity", "claude");
+      // Both providers have similar remaining quota and reset within 30 minutes of each other.
+      const quota = snapshot(NOW, [["openai-codex", 0.60], ["antigravity", 0.58]], [2.0, 2.5]);
+      // With Math.random = 0, first weighted candidate wins
+      const picked = withRandom(0, () =>
+        selectModel([codex, ag], "subscription_smart", quota, FRESH, NOW),
+      );
+      assert.ok(picked, "should select a candidate");
+    });
+
+    it("falls back to weighted selection when hoursToReset is missing", () => {
+      const codex = model("openai-codex", "gpt");
+      const ag = model("antigravity", "claude");
+      const quota = snapshot(NOW, [["openai-codex", 0.60], ["antigravity", 0.58]]);
+      const picked = withRandom(0, () =>
+        selectModel([codex, ag], "subscription_smart", quota, FRESH, NOW),
+      );
+      assert.ok(picked, "should select a candidate even without hoursToReset");
+    });
+
+    it("picks clearly leading provider even if it resets later (beyond tolerance)", () => {
+      const codex = model("openai-codex", "gpt");
+      const ag = model("antigravity", "claude");
+      // Codex has 0.85 remaining, Antigravity has 0.50 (spread > 0.10).
+      // Even though Antigravity resets in 1 hour and Codex in 72 hours,
+      // Codex's large remaining margin takes precedence.
+      const quota = snapshot(NOW, [["openai-codex", 0.85], ["antigravity", 0.50]], [72, 1]);
+      const picked = selectModel([ag, codex], "subscription_smart", quota, FRESH, NOW);
+      assert.equal(picked?.provider, "openai-codex", "provider leading outside tolerance should be chosen");
+    });
+  });
 });
+

@@ -12,7 +12,8 @@ export type RoutingStrategy =
   | "random"
   | "fastest"
   | "subscription_balance"
-  | "subscription_preferred";
+  | "subscription_preferred"
+  | "subscription_smart";
 
 export interface RouteRule {
   pattern: string;
@@ -248,6 +249,85 @@ function hasUsableQuota(
   return !isProviderSessionExhausted(model, quota, cfg, now);
 }
 
+/**
+ * Select among subscription models using soonest-renewing first when
+ * providers are within tolerance, falling back to weighted random.
+ */
+function selectSubscriptionSmart(
+  candidates: Model<Api>[],
+  quota: QuotaSnapshot | undefined,
+  quotaConfig: QuotaRoutingConfig | undefined,
+  now: number,
+): Model<Api> | undefined {
+  const subscriptionModels = candidates.filter((m) => billingClass(m) === "subscription");
+  const freeModels = candidates.filter((m) => billingClass(m) === "free");
+  const paidCreditModels = candidates.filter((m) => billingClass(m) === "paid-credit");
+  const otherModels = candidates.filter((m) => billingClass(m) === "unknown");
+
+  if (subscriptionModels.length > 0) {
+    const viable = subscriptionModels.filter((m) =>
+      hasUsableQuota(m, quota, quotaConfig, now),
+    );
+    if (viable.length > 0) {
+      const preference = weeklyQuotaPreference(viable, quota, quotaConfig, now);
+
+      // If one provider leads outside tolerance, preference.candidates contains
+      // only that provider's models. Run weighted selection on it.
+      if (!preference.ignoreWeeklyQuota) {
+        return selectWeighted(
+          preference.candidates,
+          subscriptionWeights(preference.candidates, quota, quotaConfig, now),
+        );
+      }
+
+      // Providers are within tolerance — prioritize the one whose quota resets soonest
+      // (use-it-or-lose-it).
+      const fresh = quota && now - quota.fetchedAt < (quotaConfig?.staleMinutes ?? 15) * 60_000;
+      if (fresh) {
+        const byReset = new Map<string, number>();
+        for (const m of preference.candidates) {
+          if (billingClass(m) !== "subscription") continue;
+          const pq = getModelQuota(m, quota);
+          if (typeof pq?.hoursToReset === "number") {
+            const existing = byReset.get(m.provider);
+            if (existing === undefined || pq.hoursToReset < existing) {
+              byReset.set(m.provider, pq.hoursToReset);
+            }
+          }
+        }
+
+        const providerSet = new Set(preference.candidates.map((m) => m.provider));
+        const allHaveReset = [...providerSet].every((p) => byReset.has(p));
+        const resets = [...byReset.values()].sort((a, b) => a - b);
+        const resetSpread = resets.length >= 2 ? resets[resets.length - 1] - resets[0] : 0;
+
+        if (allHaveReset && resetSpread > 1) {
+          const sorted = [...preference.candidates].sort((a, b) => {
+            const aReset = byReset.get(a.provider) ?? Infinity;
+            const bReset = byReset.get(b.provider) ?? Infinity;
+            if (Math.abs(aReset - bReset) > 1) return aReset - bReset;
+            const aRem = getModelQuota(a, quota)?.weeklyRemainingFraction ?? 0;
+            const bRem = getModelQuota(b, quota)?.weeklyRemainingFraction ?? 0;
+            return bRem - aRem;
+          });
+          return sorted[0];
+        }
+      }
+
+      // Fallback: standard weighted selection
+      return selectWeighted(
+        preference.candidates,
+        subscriptionWeights(preference.candidates, quota, quotaConfig, now),
+      );
+    }
+  }
+
+  if (freeModels.length > 0) return freeModels[0];
+  if (otherModels.length > 0) return otherModels[0];
+  if (paidCreditModels.length > 0) return paidCreditModels[0];
+  return undefined;
+}
+
 export function selectModel(
   candidates: Model<Api>[],
   strategy: RoutingStrategy,
@@ -271,6 +351,8 @@ export function selectModel(
     case "subscription_balance":
     case "subscription_preferred":
       return selectSubscriptionFirst(candidates, quota, quotaConfig, now);
+    case "subscription_smart":
+      return selectSubscriptionSmart(candidates, quota, quotaConfig, now);
     default:
       // "first", "fastest" — list order is assumed meaningful.
       return candidates[0];

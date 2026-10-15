@@ -185,7 +185,9 @@ export function createPipeline(deps: PipelineDeps): ClassificationPipeline {
           if (controller.signal.aborted || attempts >= classifierMaxAttempts) break;
           const modelId = model.kind === "registry"
             ? `${model.model.provider}/${model.model.id}`
-            : `endpoint/${model.id}`;
+            : model.kind === "jev-group"
+              ? `jev-group/${model.id}`
+              : `endpoint/${model.id}`;
           if ((classifierCooldowns.get(modelId) ?? 0) > now()) {
             debug("pipeline", "classifier.cooldown", { model: modelId });
             continue;

@@ -106,18 +106,39 @@ function resolveClassifierModels(
   }
 
   const seen = new Set<string>();
-  return patterns.flatMap<ClassifierModel>((pattern) => {
+  const resolved: ClassifierModel[] = [];
+  const jevModels: ReturnType<typeof jevClassifierForReference>[] = [];
+
+  for (const pattern of patterns) {
     const jev = jevClassifierForReference(pattern, config.classifier?.jevCredentialTarget);
-    if (jev) return [jev];
-    return scopedCandidates(ctx, pattern)
-      .filter((model) => {
-        const key = modelKey(model);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      })
-      .map((model) => ({ kind: "registry" as const, model }));
-  });
+    if (jev) {
+      jevModels.push(jev);
+    } else {
+      const candidates = scopedCandidates(ctx, pattern)
+        .filter((model) => {
+          const key = modelKey(model);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((model) => ({ kind: "registry" as const, model }));
+      resolved.push(...candidates);
+    }
+  }
+
+  // If multiple Jev models are configured, group them into a single JevClassifierGroup
+  // so they share a single pipeline attempt budget and failover internally.
+  if (jevModels.length > 1) {
+    resolved.unshift({
+      kind: "jev-group",
+      id: "default-jev-group",
+      models: jevModels as NonNullable<(typeof jevModels)[number]>[],
+    });
+  } else if (jevModels.length === 1 && jevModels[0]) {
+    resolved.unshift(jevModels[0]);
+  }
+
+  return resolved;
 }
 
 function endpointClassifier(id: string, endpoint: string): ClassifierModel {

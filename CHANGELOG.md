@@ -2,6 +2,12 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.16.0 - 15-10-2026
+
+### Added
+- New `subscription_smart` routing strategy that prioritizes subscription models whose quota window resets soonest when weekly allowances are within tolerance, falling back to weighted random at equilibrium.
+- Jev classifier grouping: multiple configured Jev models are automatically pooled into a single group that shares one pipeline attempt budget and fails over internally, improving classification reliability without consuming additional budget.
+
 ## 4.15.5 - 15-10-2026
 
 ### Changed

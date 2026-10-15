@@ -271,6 +271,7 @@ export const ALL_STRATEGIES: readonly RoutingStrategy[] = [
   "fastest",
   "subscription_balance",
   "subscription_preferred",
+  "subscription_smart",
 ];
 
 export interface ConfigIssue {

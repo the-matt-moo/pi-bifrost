@@ -29,11 +29,18 @@ export interface JevClassifier {
   readonly credentialTarget?: string;
 }
 
-/** Union: registry, raw OpenAI-compatible endpoint, or native Jev decision model. */
-export type ClassifierModel = RegistryClassifier | EndpointClassifier | JevClassifier;
+export interface JevClassifierGroup {
+  readonly kind: "jev-group";
+  readonly id: string;
+  readonly models: readonly JevClassifier[];
+}
+
+/** Union: registry, raw OpenAI-compatible endpoint, or native Jev decision model / group. */
+export type ClassifierModel = RegistryClassifier | EndpointClassifier | JevClassifier | JevClassifierGroup;
 
 function classifierBaseUrl(cm: ClassifierModel): string {
   if (cm.kind === "registry") return cm.model.baseUrl;
+  if (cm.kind === "jev-group") return cm.models[0]?.endpoint ?? "";
   return cm.kind === "jev" ? cm.endpoint : cm.baseUrl;
 }
 
@@ -42,7 +49,7 @@ function classifierId(cm: ClassifierModel): string {
 }
 
 function isOpenAiCompatibleEndpoint(cm: ClassifierModel): boolean {
-  if (cm.kind === "jev") return false;
+  if (cm.kind === "jev" || cm.kind === "jev-group") return false;
   if (cm.kind === "endpoint") return true; // endpoint config implies OpenAI-compatible
   const api = cm.model.api;
   return (
@@ -332,6 +339,29 @@ async function classifyWithJev(
   }
 }
 
+async function classifyWithJevGroup(
+  ctx: ExtensionContext,
+  group: JevClassifierGroup,
+  categories: readonly string[],
+  prompt: string,
+  options: ClassifierOptions,
+): Promise<DirectClassification> {
+  let anyAttempted = false;
+  for (const model of group.models) {
+    const res = await classifyWithJev(ctx, model, categories, prompt, options);
+    if (res.attempted) anyAttempted = true;
+    if (res.outcome.status === "accepted" || res.outcome.status === "rejected") {
+      debug("classifier", "jev_group.resolved", {
+        group: group.id,
+        model: model.id,
+        status: res.outcome.status,
+      });
+      return res;
+    }
+  }
+  return { attempted: anyAttempted, outcome: { status: "failed" } };
+}
+
 async function classifyWithDirectHttp(
   ctx: ExtensionContext,
   classifierModel: ClassifierModel,
@@ -344,6 +374,10 @@ async function classifyWithDirectHttp(
   const temperature = options.temperature ?? 0;
   const threshold = options.confidenceThreshold ?? 0;
   const userPrompt = classificationPrompt(categories, prompt, options.tierDescriptions, threshold > 0);
+
+  if (classifierModel.kind === "jev-group") {
+    return classifyWithJevGroup(ctx, classifierModel, categories, prompt, options);
+  }
 
   if (classifierModel.kind === "jev") {
     return classifyWithJev(ctx, classifierModel, categories, prompt, options);

@@ -555,6 +555,57 @@ describe("classification-pipeline", () => {
     });
   });
 
+  describe("jev-group classifier integration", () => {
+    it("handles jev-group classifier and accepts tier with extras", async () => {
+      const group = {
+        kind: "jev-group" as const,
+        id: "test-group",
+        models: [],
+      };
+      const pipeline = createPipeline(
+        deps({
+          tiers: ["general", "coding"],
+          complexityEnabled: false,
+          classifierModels: [group],
+          classifyWithLLM: async () => ({
+            status: "accepted" as const,
+            tier: "coding",
+            jevExtras: { effort: 1.0 },
+          }),
+        }),
+      );
+      const res = await pipeline.classify("refactor this code");
+      assert.deepEqual(res, {
+        kind: "classified",
+        tier: "coding",
+        source: "classifier",
+        jevEffort: 1.0,
+      });
+    });
+
+    it("applies cooldown to jev-group on failure without crashing", async () => {
+      const cooldowns = new Map<string, number>();
+      const group = {
+        kind: "jev-group" as const,
+        id: "failing-group",
+        models: [],
+      };
+      const pipeline = createPipeline(
+        deps({
+          tiers: ["general", "coding"],
+          complexityEnabled: false,
+          classifierModels: [group],
+          classifierCooldowns: cooldowns,
+          classifyWithLLM: async () => ({
+            status: "failed" as const,
+          }),
+        }),
+      );
+      await pipeline.classify("test task");
+      assert.ok(cooldowns.has("jev-group/failing-group"), "cooldown should be set on group key");
+    });
+  });
+
   describe("frontier directive", () => {
     it("appends the planning-only directive for frontier only", () => {
       assert.equal(frontierSystemPrompt("base", "frontier"), `base

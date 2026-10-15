@@ -36,9 +36,10 @@
         "random",
         "fastest",
         "subscription_balance",
-        "subscription_preferred"
+        "subscription_preferred",
+        "subscription_smart"
       ],
-      "description": "Model selection strategy. 'first'/'fastest' picks first candidate (list should be pre-sorted). 'cheapest' sorts by input+output cost. 'cheapest_input' by input cost. 'cheapest_output' by output cost. 'largest_context' by context window. 'random' picks randomly. 'subscription_balance' weighs subscription-provider candidates by weekly usage remaining (see quotaRouting). 'subscription_preferred' prioritizes subscription models over free, unknown, and paid-credit models.",
+      "description": "Model selection strategy. 'first'/'fastest' picks first candidate (list should be pre-sorted). 'cheapest' sorts by input+output cost. 'cheapest_input' by input cost. 'cheapest_output' by output cost. 'largest_context' by context window. 'random' picks randomly. 'subscription_balance' weighs subscription-provider candidates by weekly usage remaining (see quotaRouting). 'subscription_preferred' prioritizes subscription models over free, unknown, and paid-credit models. 'subscription_smart' selects subscription models whose quota window resets soonest, then falls back to weighted balance.",
       "default": "first"
     },
     "categoryStrategies": {
@@ -60,7 +61,8 @@
           "random",
           "fastest",
           "subscription_balance",
-          "subscription_preferred"
+          "subscription_preferred",
+          "subscription_smart"
         ]
       }
     },
