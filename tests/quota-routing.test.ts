@@ -7,6 +7,7 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   billingClass,
   filterSessionExhausted,
+  getModelQuota,
   isProviderQuotaExhausted,
   resolveHealthyModel,
   selectComparableAvailableModel,
@@ -14,7 +15,7 @@ import {
   selectWeighted,
   subscriptionWeights,
 } from "../routing.ts";
-import { parseCodexQuota, QuotaStore, type QuotaSnapshot } from "../quota.ts";
+import { parseAntigravityQuota, parseAnthropicQuota, parseCodexQuota, QuotaStore, type QuotaSnapshot } from "../quota.ts";
 
 function model(provider: string, id: string, cost = 1): Model<Api> {
   return {
@@ -159,6 +160,48 @@ describe("QuotaStore Codex auth", () => {
       await assert.doesNotReject(store.refreshIfStale(1_000));
       assert.deepEqual(store.getSnapshot(), { byProvider: {}, fetchedAt: 1_000 });
     });
+  });
+});
+
+describe("Anthropic quota windows", () => {
+  it("treats sub-one utilization as a percentage", () => {
+    assert.deepEqual(parseAnthropicQuota({
+      five_hour: { utilization: 0.98 },
+      seven_day: { utilization: 40 },
+    }), {
+      sessionRemainingFraction: 0.9902,
+      weeklyRemainingFraction: 0.6,
+      hoursToReset: undefined,
+    });
+  });
+
+  it("rejects invalid utilization values", () => {
+    assert.equal(parseAnthropicQuota({
+      five_hour: { utilization: -1 },
+      seven_day: { utilization: Number.POSITIVE_INFINITY },
+    }), undefined);
+  });
+});
+
+describe("Antigravity quota families", () => {
+  it("keeps Argon separate from other Gemini quota", () => {
+    const quota = parseAntigravityQuota({ groups: [
+      { displayName: "Gemini Models", buckets: [{ window: "weekly", remainingFraction: 0.8 }] },
+      { displayName: "Claude and GPT Models", buckets: [{ window: "weekly", remainingFraction: 0.6 }] },
+      { displayName: "Gemini 4 Argon", buckets: [{ window: "weekly", remainingFraction: 0.99 }] },
+    ] }, NOW);
+
+    assert.equal(quota?.["antigravity:gemini"]?.weeklyRemainingFraction, 0.8);
+    assert.equal(quota?.["antigravity:claude"]?.weeklyRemainingFraction, 0.6);
+    assert.equal(quota?.["antigravity:argon"]?.weeklyRemainingFraction, 0.99);
+    assert.equal(quota?.antigravity?.weeklyRemainingFraction, 0.6);
+    assert.equal(getModelQuota(model("antigravity", "gemini-4-argon"), { byProvider: quota!, fetchedAt: NOW })?.weeklyRemainingFraction, 0.99);
+  });
+
+  it("rejects invalid remaining fractions instead of fabricating quota", () => {
+    assert.equal(parseAntigravityQuota({ groups: [
+      { displayName: "Gemini Models", buckets: [{ window: "weekly", remainingFraction: 2 }] },
+    ] }, NOW), undefined);
   });
 });
 
@@ -397,6 +440,19 @@ describe("quota exclusion invariants", () => {
   });
 });
 
+describe("Antigravity family-aware routing", () => {
+  it("balances independently metered families from the same provider", () => {
+    const gemini = model("antigravity", "gemini-4-standard");
+    const argon = model("antigravity", "gemini-4-argon");
+    const quota: QuotaSnapshot = { byProvider: {
+      "antigravity:gemini": { weeklyRemainingFraction: 0.2 },
+      "antigravity:argon": { weeklyRemainingFraction: 0.9 },
+    }, fetchedAt: NOW };
+
+    assert.equal(withRandom(0, () => selectModel([gemini, argon], "subscription_smart", quota, FRESH, NOW)), argon);
+  });
+});
+
 describe("exhausted pinned-model fallback", () => {
   it("detects fresh exhausted quota and selects a comparable model from another measured provider", () => {
     const current = model("openai-codex", "codex");
@@ -416,6 +472,17 @@ describe("exhausted pinned-model fallback", () => {
       ),
       comparable,
     );
+  });
+
+  it("can switch between independently metered Antigravity families", () => {
+    const current = model("antigravity", "gemini-4-argon");
+    const comparable = model("antigravity", "gemini-4-standard");
+    const quota: QuotaSnapshot = { byProvider: {
+      "antigravity:argon": { weeklyRemainingFraction: 0 },
+      "antigravity:gemini": { weeklyRemainingFraction: 0.7 },
+    }, fetchedAt: NOW };
+
+    assert.equal(selectComparableAvailableModel(current, [current, comparable], "first", quota, FRESH, NOW), comparable);
   });
 
   it("does not switch on stale telemetry or to an unmeasured provider", () => {

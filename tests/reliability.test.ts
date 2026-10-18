@@ -7,6 +7,7 @@ import {
   DEFAULT_RELIABILITY,
   emptyReliabilityState,
   getCircuitState,
+  isModelUnavailable,
   isRetryableProviderError,
   isRetryableProviderLimit,
   isAccountLevelLimit,
@@ -43,6 +44,16 @@ describe("reliability", () => {
     assert.equal(isRetryableProviderError("MALFORMED_FUNCTION_CALL"), true);
     assert.equal(isRetryableProviderError("provider request failed"), false);
     assert.equal(isRetryableProviderLimit("MALFORMED_FUNCTION_CALL"), false);
+  });
+
+  it("hands off on unavailable models but keeps the full cooldown", () => {
+    const reason = "Antigravity API error (request-failed, runtimeModel=gemini-pro-agent): This model is unavailable right now (Resource has been exhausted (e.g. check quota).). Next: switch to gemini-3.8-flash";
+    assert.equal(isModelUnavailable(reason), true);
+    assert.equal(isModelUnavailable("provider request failed"), false);
+    assert.equal(isRetryableProviderLimit(reason), false);
+    const t0 = Date.UTC(2026, 0, 1, 12, 0, 0);
+    const state = recordModelFailure(emptyReliabilityState(), "antigravity/gemini-3.1-pro", { ...DEFAULT_RELIABILITY, cooldownMinutes: 60 }, t0, "agent_settled", reason);
+    assert.equal(state.models["antigravity/gemini-3.1-pro"]?.openUntil, t0 + 60 * 60_000);
   });
 
   it("opens circuit after threshold failures within window", () => {

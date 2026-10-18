@@ -2,6 +2,15 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.17.0 - 18-10-2026
+
+### Added
+- Antigravity quota is parsed per model family (Argon, Claude/GPT, Gemini) with independent balancing and reset tracking; invalid or out-of-range telemetry is rejected instead of fabricating quota.
+- Retries hand off on persistent model-unavailability errors (e.g. retired Antigravity models) while keeping the full circuit cooldown.
+
+### Fixed
+- Anthropic quota interprets sub-one utilization values as percentages rather than fractions.
+
 ## 4.16.0 - 15-10-2026
 
 ### Added

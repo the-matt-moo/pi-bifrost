@@ -55,7 +55,7 @@ import {
 } from "./routing.js";
 import { QuotaStore } from "./quota.js";
 import { ReliabilityStore } from "./reliability-store.js";
-import { isRetryableProviderError, isRetryableProviderLimit } from "./reliability.js";
+import { isModelUnavailable, isRetryableProviderError, isRetryableProviderLimit } from "./reliability.js";
 import { loadRuntimeState, runtimeStatePath, saveRuntimeState, DEFAULT_RUNTIME_STATE, type RuntimeModeState } from "./runtime-state.js";
 import { cleanupSessionState, scheduleSessionCleanup } from "./session-cleanup.js";
 import { createCommandRouter, getBifrostCommandCompletions, log, logOverwrite, uiBusy, uiDone, setBifrostSilent, syncBifrostModeStatus, clearBifrostWidgets, formatBifrostRouting, isChildSession, type BifrostState } from "./commands.js";
@@ -774,7 +774,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     if (!settled.reason) return;
 
     const retry = settled.retry;
-    const retryable = isCreditsRequired(settled.reason) || isRetryableProviderLimit(settled.reason) || isRetryableProviderError(settled.reason);
+    const retryable = isCreditsRequired(settled.reason) || isRetryableProviderLimit(settled.reason) || isRetryableProviderError(settled.reason) || isModelUnavailable(settled.reason);
     const max = state.config.reliability?.maxAutoRetries ?? 2;
     // A finalized boundary proves tools finished; never restart the user's prompt.
     const safe = event.outcome !== "aborted" && event.context?.pendingMessages.length === 0

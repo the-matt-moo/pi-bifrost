@@ -289,22 +289,23 @@ function selectSubscriptionSmart(
           if (billingClass(m) !== "subscription") continue;
           const pq = getModelQuota(m, quota);
           if (typeof pq?.hoursToReset === "number") {
-            const existing = byReset.get(m.provider);
+            const key = quotaKey(m);
+            const existing = byReset.get(key);
             if (existing === undefined || pq.hoursToReset < existing) {
-              byReset.set(m.provider, pq.hoursToReset);
+              byReset.set(key, pq.hoursToReset);
             }
           }
         }
 
-        const providerSet = new Set(preference.candidates.map((m) => m.provider));
+        const providerSet = new Set(preference.candidates.map(quotaKey));
         const allHaveReset = [...providerSet].every((p) => byReset.has(p));
         const resets = [...byReset.values()].sort((a, b) => a - b);
         const resetSpread = resets.length >= 2 ? resets[resets.length - 1] - resets[0] : 0;
 
         if (allHaveReset && resetSpread > 1) {
           const sorted = [...preference.candidates].sort((a, b) => {
-            const aReset = byReset.get(a.provider) ?? Infinity;
-            const bReset = byReset.get(b.provider) ?? Infinity;
+            const aReset = byReset.get(quotaKey(a)) ?? Infinity;
+            const bReset = byReset.get(quotaKey(b)) ?? Infinity;
             if (Math.abs(aReset - bReset) > 1) return aReset - bReset;
             const aRem = getModelQuota(a, quota)?.weeklyRemainingFraction ?? 0;
             const bRem = getModelQuota(b, quota)?.weeklyRemainingFraction ?? 0;
@@ -383,20 +384,20 @@ export function billingClass(model: Model<Api>): BillingClass {
  * Look up quota for a specific model, resolving sub-provider buckets
  * (e.g. `antigravity:claude` vs `antigravity:gemini`) when present.
  */
+function quotaKey(model: Model<Api>): string {
+  if (model.provider !== "antigravity") return model.provider;
+  if (/argon/i.test(model.id)) return "antigravity:argon";
+  if (/claude|gpt/i.test(model.id)) return "antigravity:claude";
+  if (/gemini/i.test(model.id)) return "antigravity:gemini";
+  return model.provider;
+}
+
 export function getModelQuota(
   model: Model<Api>,
   quota: QuotaSnapshot | undefined,
 ): ProviderQuota | undefined {
   if (!quota) return undefined;
-  if (model.provider === "antigravity") {
-    if (/claude|gpt/i.test(model.id)) {
-      return quota.byProvider["antigravity:claude"] ?? quota.byProvider["antigravity"];
-    }
-    if (/gemini/i.test(model.id)) {
-      return quota.byProvider["antigravity:gemini"] ?? quota.byProvider["antigravity"];
-    }
-  }
-  return quota.byProvider[model.provider];
+  return quota.byProvider[quotaKey(model)] ?? quota.byProvider[model.provider];
 }
 
 const WEEKLY_BALANCE_TOLERANCE = 0.10;
@@ -414,7 +415,7 @@ function weeklyQuotaPreference(
   for (const model of candidates) {
     if (billingClass(model) !== "subscription") continue;
     const remaining = getModelQuota(model, quota)?.weeklyRemainingFraction;
-    if (typeof remaining === "number") byProvider.set(model.provider, remaining);
+    if (typeof remaining === "number") byProvider.set(quotaKey(model), remaining);
   }
   if (byProvider.size < 2) return { candidates, ignoreWeeklyQuota: false };
 
@@ -429,7 +430,7 @@ function weeklyQuotaPreference(
   }
 
   return {
-    candidates: candidates.filter((model) => model.provider === bestProvider),
+    candidates: candidates.filter((model) => quotaKey(model) === bestProvider),
     ignoreWeeklyQuota: false,
   };
 }
@@ -594,10 +595,11 @@ export function selectComparableAvailableModel(
   if (!isProviderQuotaExhausted(current, quota, quotaConfig, now) || !quota) return undefined;
   const reserve = quotaConfig?.reservePercent ?? 0.03;
   const tier = guessTier(current, heuristics);
+  const currentQuota = quotaKey(current);
   const available = candidates.filter((model) =>
-    model.provider !== current.provider &&
+    quotaKey(model) !== currentQuota &&
     guessTier(model, heuristics) === tier &&
-    (quota.byProvider[model.provider]?.weeklyRemainingFraction ?? -1) > reserve
+    (getModelQuota(model, quota)?.weeklyRemainingFraction ?? -1) > reserve
   );
   return selectModel(available, strategy, quota, quotaConfig, now);
 }

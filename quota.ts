@@ -134,6 +134,43 @@ export function parseCodexQuota(json: any): ProviderQuota | undefined {
   return Object.keys(result).length ? result : undefined;
 }
 
+export function parseAntigravityQuota(json: any, now = Date.now()): Record<string, ProviderQuota> | undefined {
+  const quotas: Record<string, ProviderQuota> = {};
+  let minWeekly: number | undefined;
+  let minHours: number | undefined;
+
+  for (const group of json?.groups ?? []) {
+    const label = group.displayName || group.description || "";
+    const family = /argon/i.test(label) ? "argon" : /claude|gpt|3p/i.test(label) ? "claude" : /gemini/i.test(label) ? "gemini" : undefined;
+    if (!family) continue;
+    const key = `antigravity:${family}`;
+    const quota = quotas[key] ?? {};
+
+    for (const bucket of group.buckets ?? []) {
+      const remaining = bucket.remainingFraction;
+      if (typeof remaining !== "number" || !Number.isFinite(remaining) || remaining < 0 || remaining > 1) continue;
+      const window = (bucket.window || bucket.bucketId || bucket.displayName || "").toLowerCase();
+      if (window.includes("week") || window.includes("7d")) {
+        if (quota.weeklyRemainingFraction === undefined || remaining < quota.weeklyRemainingFraction) {
+          quota.weeklyRemainingFraction = remaining;
+          const resetMs = Date.parse(bucket.resetTime) - now;
+          quota.hoursToReset = Number.isFinite(resetMs) ? Math.max(0, resetMs / 3_600_000) : undefined;
+        }
+        if (minWeekly === undefined || remaining < minWeekly) {
+          minWeekly = remaining;
+          minHours = quota.hoursToReset;
+        }
+      } else if (window.includes("5h") || window.includes("session")) {
+        quota.sessionRemainingFraction = Math.min(quota.sessionRemainingFraction ?? 1, remaining);
+      }
+    }
+    if (Object.keys(quota).length) quotas[key] = quota;
+  }
+
+  if (minWeekly !== undefined) quotas.antigravity = { weeklyRemainingFraction: minWeekly, hoursToReset: minHours };
+  return Object.keys(quotas).length ? quotas : undefined;
+}
+
 async function fetchAntigravityQuota(): Promise<ProviderQuota | Record<string, ProviderQuota> | undefined> {
   const token = getAntigravityToken();
   if (!token) return undefined;
@@ -155,41 +192,8 @@ async function fetchAntigravityQuota(): Promise<ProviderQuota | Record<string, P
         body: JSON.stringify({}),
       });
       if (!res.ok) continue;
-      const json = (await res.json()) as any;
-      const groups = json.groups || [];
-      const quotas: Record<string, ProviderQuota> = {};
-      let minWeekly = 1;
-      let minHours: number | undefined;
-
-      for (const g of groups) {
-        const is3P = /claude|gpt|3p/i.test(g.displayName || g.description || "");
-        const key = is3P ? "antigravity:claude" : "antigravity:gemini";
-        const pq: ProviderQuota = {};
-        for (const b of g.buckets || []) {
-          const w = (b.window || b.bucketId || b.displayName || "").toLowerCase();
-          const isWeekly = w.includes("week") || w.includes("7d");
-          const isSession = w.includes("5h") || w.includes("session");
-          if (typeof b.remainingFraction !== "number") continue;
-          if (isWeekly) {
-            pq.weeklyRemainingFraction = b.remainingFraction;
-            if (b.resetTime) {
-              pq.hoursToReset = Math.max(0, (Date.parse(b.resetTime) - Date.now()) / 3_600_000);
-            }
-            if (b.remainingFraction < minWeekly) {
-              minWeekly = b.remainingFraction;
-              minHours = pq.hoursToReset;
-            }
-          } else if (isSession) {
-            pq.sessionRemainingFraction = b.remainingFraction;
-          }
-        }
-        quotas[key] = pq;
-      }
-      quotas["antigravity"] = {
-        weeklyRemainingFraction: minWeekly,
-        hoursToReset: minHours,
-      };
-      return quotas;
+      const quota = parseAntigravityQuota(await res.json());
+      if (quota) return quota;
     } catch {}
   }
   return undefined;
@@ -212,6 +216,30 @@ function getAnthropicToken(): string | undefined {
   }
 }
 
+export function parseAnthropicQuota(json: any, now = Date.now()): ProviderQuota | undefined {
+  const remaining = (window: any): number | undefined => {
+    const utilization = window?.utilization;
+    return typeof utilization === "number" && Number.isFinite(utilization) && utilization >= 0 && utilization <= 100
+      ? 1 - utilization / 100
+      : undefined;
+  };
+  const weekly = json?.seven_day;
+  const session = json?.five_hour;
+  const weeklyUsage = remaining(weekly) !== undefined ? weekly : remaining(session) !== undefined ? session : undefined;
+  if (!weeklyUsage) return undefined;
+
+  let hoursToReset: number | undefined;
+  if (weeklyUsage.resets_at) {
+    const resetMs = new Date(weeklyUsage.resets_at).getTime() - now;
+    if (resetMs > 0) hoursToReset = resetMs / 3600_000;
+  }
+
+  const result: ProviderQuota = { weeklyRemainingFraction: remaining(weeklyUsage), hoursToReset };
+  const sessionRemaining = remaining(session);
+  if (sessionRemaining !== undefined) result.sessionRemainingFraction = sessionRemaining;
+  return result;
+}
+
 async function fetchAnthropicQuota(): Promise<ProviderQuota | undefined> {
   const token = getAnthropicToken();
   if (!token) return undefined;
@@ -225,32 +253,7 @@ async function fetchAnthropicQuota(): Promise<ProviderQuota | undefined> {
       },
     });
     if (!res.ok) return undefined;
-    const json = (await res.json()) as any;
-    
-    // Weekly balancing prefers the 7-day window; falls back to the session
-    // (5-hour) window only when weekly telemetry is absent.
-    const utilFraction = (u: number) => (u <= 1 ? u : u / 100);
-    const weekly = json?.seven_day;
-    const session = json?.five_hour;
-    const weeklyUsage = weekly?.utilization !== undefined ? weekly : session;
-    if (!weeklyUsage || typeof weeklyUsage.utilization !== "number") return undefined;
-
-    let hoursToReset: number | undefined;
-    if (weeklyUsage.resets_at) {
-      const resetMs = new Date(weeklyUsage.resets_at).getTime() - Date.now();
-      if (resetMs > 0) hoursToReset = resetMs / 3600_000;
-    }
-
-    const result: ProviderQuota = {
-      weeklyRemainingFraction: Math.max(0, 1 - utilFraction(weeklyUsage.utilization)),
-      hoursToReset,
-    };
-    // The session window drives the hard 429-avoidance filter. A session can be
-    // fully drained while the weekly window still shows headroom.
-    if (session && typeof session.utilization === "number") {
-      result.sessionRemainingFraction = Math.max(0, 1 - utilFraction(session.utilization));
-    }
-    return result;
+    return parseAnthropicQuota(await res.json());
   } catch {
     return undefined;
   }

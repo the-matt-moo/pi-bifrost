@@ -151,6 +151,11 @@ export function isRetryableProviderError(reason: string): boolean {
   return /malformed[_ ]function[_ ]call/i.test(reason);
 }
 
+/** Persistent model unavailability (e.g. retired Antigravity models): hand off, but keep the full circuit cooldown. */
+export function isModelUnavailable(reason: string): boolean {
+  return /model is unavailable|resource has been exhausted/i.test(reason);
+}
+
 function isTransientProviderLimit(reason: string): boolean {
   return isRetryableProviderLimit(reason) || isRetryableProviderError(reason);
 }
