@@ -156,6 +156,17 @@ describe("bifrost command ui", () => {
     assert.equal(state.classifierEnabled, false);
   });
 
+  it("unpin releases model and thinking locks without changing the selected thinking mode", async () => {
+    const { ctx } = makeCtx();
+    const state = { ...makeState(), pinned: true, thinkingPinned: true, thinkingMode: "advisory" as const };
+
+    await createCommandRouter(state as never)("unpin", ctx as never);
+
+    assert.equal(state.pinned, false);
+    assert.equal(state.thinkingPinned, false);
+    assert.equal(state.thinkingMode, "advisory");
+  });
+
   it("sets thinking mode and refreshes status", async () => {
     const { ctx, calls } = makeCtx();
     const state = makeState(() => calls.push({ kind: "save" }));

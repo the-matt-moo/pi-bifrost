@@ -280,7 +280,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }
     pendingHandoff = { target: modelKey(next), content: document };
     state.modelCategory = tier;
-    state.pinned = false;
+    state.pinned = true;
     state.saveModeState();
     syncBifrostModeStatus(ctx, state);
     return next;
@@ -610,7 +610,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       const wasPinned = state.pinned || state.thinkingPinned;
       state.pinned = false;
       state.thinkingPinned = false;
-      state.thinkingMode = "apply";
       state.saveModeState();
       syncBifrostModeStatus(ctx, state);
       clearBifrostWidgets(ctx);
@@ -626,7 +625,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         if (state.pinned) {
           state.pinned = false;
           state.thinkingPinned = false;
-          state.thinkingMode = "apply";
           state.saveModeState();
           syncBifrostModeStatus(ctx, state);
           clearBifrostWidgets(ctx);
@@ -967,7 +965,8 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }
 
     if (state.pinned) {
-      if (!forcedTier && !sessionContext.isClearlyUnrelated(promptText)) {
+      // A pin holds across topics; only explicit overrides, unpin, or exhaustion handoff move it.
+      if (!forcedTier) {
         const tier = ctx.model && configuredCategory(ctx, ctx.model, state.config.models, state.modelCategory);
         if (ctx.model) runtimeReliability.begin(modelKey(ctx.model), tier ? { prompt: promptText, images: event.images, tier, autoRetryCount: 0 } : undefined);
         sessionContext.record(tier ?? state.config.default ?? "general", promptText);
@@ -979,7 +978,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
       state.pinned = false;
       sessionContext.reset();
-      const reason = forcedTier ? "manual inline override" : "unrelated topic";
+      const reason = "manual inline override";
       debug("input", "auto_unpin", { reason });
       log(ctx, `Bifrost unpinned for ${reason}.`);
     }
@@ -1201,8 +1200,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       endSwitch({ model: modelKey(model), ok });
       uiDone(ctx);
       setBifrostWorkingMessage(ctx, undefined);
-      // Auto-pin automatic routing, including fallback, after a successful switch.
-      // Explicit inline overrides stay one-shot (session-local, ADR-0015).
+      // Every successful route, including an explicit override or fallback, becomes sticky.
       if (ok && !state.pinned && pinSource) {
         state.pinned = true;
         debug("input", "auto_pin", { model: modelKey(model), source: pinSource });

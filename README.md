@@ -31,7 +31,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Model discovery | Probes all Pi models | Adds `--scoped` (Pi enabled-models only, always included when requested regardless of discovery errors) and `--free` (top 5 OpenRouter free models by collection ranking, or top 5 fastest if ranking fetch fails) flags for `init` and `update`; `update --free` enforces the same cap |
 | Candidate scoping | Full registry | Shared healthy-model resolution intersects configured candidates with Pi's scope, including caller-supplied candidates; handoffs never infer models from the registry |
 | Image prompts | Routed like text-only prompts | Prefers vision-capable models; if the selected tier cannot take images, Bifrost falls back to higher tiers with image support |
-| Pin quota safety | Manual pin remains until explicitly removed | A pinned model that returns a 429 or rate-limit error is auto-unpinned immediately so the next prompt routes to a healthy model; quota-exhausted models are also unpinned proactively before the request; classified switches auto-pin to prevent context-loss churn |
+| Pin quota safety | Manual pin remains until explicitly removed | Pins remain sticky across topics. Required quota/error handoffs may replace the active model; a successful replacement becomes the new pin, without replaying the prompt |
 | Reliability | Threshold-based circuit breaker | Final runtime errors open the circuit, including pinned/manual runs; bounded same-category continuations preserve completed work without prompt replay, prefer native providers, and use configured scoped OpenRouter only outside ultra |
 | Stale-registry warnings | Warning shown on stale host registry | A strict-tier "no healthy model" warning is re-checked after a single registry refresh before being shown; the warning appears only when the tier is genuinely unavailable due to circuits or quota exhaustion. Session-start candidate validation also awaits a registry refresh so dynamic provider models aren't flagged as spuriously unresolvable on reload |
 | Config reconciliation | `init` only | Adds `/bifrost update --scoped/--free` to preview and merge discovery results while preserving manual entries |
@@ -200,7 +200,7 @@ Narrow discovery scope when needed:
 | `/bifrost` | Dashboard with mode, model, and quick actions |
 | `/bifrost init [--force]` | Probe models and generate config; fresh successful probes are reused for one hour unless forced |
 | `/bifrost on` / `off` | Enable or disable routing |
-| `/bifrost pin` / `unpin` | Lock the main-session model; automatic routes (including regex and fallback) auto-pin, while manual overrides, clearly unrelated topics, or unavailable models can switch it (subagents remain independent; see `keys` config for shortcuts) |
+| `/bifrost pin` / `unpin` | Lock or release the main-session model and thinking configuration. Routes, explicit tier overrides, and required fallback replacements become sticky across later topics; unpin clears model/thinking locks without changing the selected thinking mode (subagents remain independent; see `keys` config for shortcuts) |
 | `/bifrost silence` / `unsilence` | Suppress or restore console output |
 | `/bifrost preview <prompt>` | See model routing, thinking level, and concise reasons without sending |
 | `/bifrost reload` | Reload config after manual edits |
@@ -214,7 +214,7 @@ Narrow discovery scope when needed:
 
 Active advisory/apply mode appears immediately in Bifrost status as `think:advisory` or `think:apply`.
 
-Force a tier for one message with its slash command or by prefixing the tier name:
+Override the current route for a message with its slash command or by prefixing the tier name. The selected model and thinking configuration then remain sticky:
 
 ```
 /frontier debug this race condition
@@ -269,7 +269,7 @@ A regex rule that matches a configured category in the current turn takes priori
 Registry refreshes use stale-while-revalidate: existing models route the current prompt immediately while refresh runs in the background. An empty registry or explicit recovery still waits for fresh data. Quota telemetry also backs off after empty results and degrades to neutral routing. Codex quota auth is resolved by Pi's model registry, so Pi owns OAuth refresh and credential persistence.
 
 ### 4. Model Autopinning
-To prevent context-loss from per-prompt model churn, Bifrost **auto-pins** the selected model whenever it routes to a different model via the LLM classifier or regex rules (classification source). This keeps thinking-level state, cache continuity, and quota tracking stable across a multi-model session. Manual inline overrides (e.g. `frontier debug this`) switch without pinning — only classified switches lock in. `Ctrl+Delete` unpins at any time. Autopinning is session-local and never persisted.
+To prevent context-loss from per-prompt model churn, Bifrost **auto-pins the routed model and applied thinking configuration**, including when the model was already active. Later prompts keep that configuration regardless of topic. Explicit tier overrides (e.g. `frontier debug this`) replace the pin, and successful quota/error fallback replacements become the new pin. `/bifrost unpin` or the configured unpin shortcut resumes routing; deliberate `off`/`advisory`/`apply` thinking mode remains unchanged. Autopinning is session-local and never persisted.
 
 ### 5. Thinking Mode Steering
 If `"thinking": { "mode": "apply" }` is set in config, Bifrost assesses prompt complexity to dynamically steer the selected model's **thinking level/effort**.

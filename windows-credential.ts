@@ -65,7 +65,7 @@ export async function readWindowsCredential(target: string): Promise<string | un
   const encoded = await new Promise<string | undefined>((resolve, reject) => {
     execFile(
       "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-EncodedCommand", encodedScript],
+      ["-NoProfile", "-WindowStyle", "Hidden", "-NonInteractive", "-EncodedCommand", encodedScript],
       {
         env: {
           SystemRoot: process.env.SystemRoot,

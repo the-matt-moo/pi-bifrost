@@ -31,10 +31,10 @@ function deps(overrides: Partial<PipelineDeps> = {}): PipelineDeps {
 
 describe("classification-pipeline", () => {
   describe("autoPinSource", () => {
-    it("pins automatic classifications and fallback, but not inline overrides", () => {
+    it("pins every routed classification and fallback", () => {
       assert.equal(autoPinSource({ kind: "classified", tier: "frontier", source: "regex" }), "regex");
       assert.equal(autoPinSource({ kind: "fallback", tier: "general" }), "fallback");
-      assert.equal(autoPinSource({ kind: "classified", tier: "frontier", source: "inline" }), undefined);
+      assert.equal(autoPinSource({ kind: "classified", tier: "frontier", source: "inline" }), "inline");
       assert.equal(autoPinSource({ kind: "unclassified" }), undefined);
     });
   });

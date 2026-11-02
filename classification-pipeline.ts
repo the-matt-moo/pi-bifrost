@@ -32,7 +32,7 @@ export type ClassificationResult =
 
 export function autoPinSource(result: ClassificationResult): ClassificationSource | "fallback" | undefined {
   if (result.kind === "fallback") return "fallback";
-  if (result.kind === "classified" && result.source !== "inline") return result.source;
+  if (result.kind === "classified") return result.source;
   return undefined;
 }
 

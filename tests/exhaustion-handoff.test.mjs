@@ -25,16 +25,22 @@ async function scenario(options, fn) {
   const native = model("openai-codex", "codex", options.images);
   native.cost.input = native.cost.output = 5; // cheaper OpenRouter must not defeat native-first handoff
   const or = model("openrouter", "anthropic/opus", options.images);
-  const fable = model("anthropic", "fable");
+  const fable = model(options.fableProvider ?? "anthropic", "fable");
   const tier = options.tier ?? "coding";
   const available = options.available ?? [current, or, native, fable];
   const configured = options.configured ?? [current, or, native];
   writeFileSync(join(dir, "bifrost.json"), JSON.stringify({ enabled: true, silent: true, classifier: { enabled: false }, cache: { enabled: false },
-    default: "general", strategy: options.strategy ?? "first", subscriptionGuard: options.guard, models: { [tier]: configured.map(key), general: options.general?.map(key) ?? [key(fable)] },
+    default: "general", strategy: options.strategy ?? "first", categoryStrategies: options.categoryStrategies,
+    subscriptionGuard: options.guard, rules: options.rules, thinking: options.thinking, keys: options.keys,
+    models: { [tier]: configured.map(key), general: options.general?.map(key) ?? [key(fable)], ...options.models },
     quotaRouting: { providers: options.quota ?? {} }, reliability: { enabled: true, autoRetry: true, maxAutoRetries: options.max ?? 2 } }));
   const handlers = new Map();
   const sent = [];
   const switches = [];
+  const thinkingSets = [];
+  const commands = new Map();
+  const shortcuts = new Map();
+  let thinking = "off";
   const statuses = new Map();
   const branch = options.branch ?? [
     { type: "message", message: { role: "user", content: "Implement the requested fix" } },
@@ -42,7 +48,9 @@ async function scenario(options, fn) {
     { type: "message", message: { role: "toolResult", toolCallId: "write-1", toolName: "write", isError: false, content: [{ type: "text", text: "Completed: changed example.ts once" }] } },
   ];
   let ctx;
-  const pi = { on: (name, fn) => handlers.set(name, fn), registerCommand: () => {}, getThinkingLevel: () => "off",
+  const pi = { on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command),
+    registerShortcut: (k, shortcut) => shortcuts.set(k, shortcut), getThinkingLevel: () => thinking,
+    setThinkingLevel: (level) => { thinkingSets.push(level); thinking = level; void handlers.get("thinking_level_select")({ level }, ctx); },
     sendUserMessage: (message) => sent.push(message), setModel: async (next) => {
       switches.push(key(next));
       if (options.switchFailure === "throw") throw new Error("switch refused");
@@ -52,11 +60,11 @@ async function scenario(options, fn) {
       return true;
     } };
   bifrost(new Proxy(pi, { get: (obj, k) => obj[k] ?? (() => {}) }));
-  ctx = { model: current, thinkingLevel: "off", hasUI: false, isIdle: () => true,
+  ctx = { model: current, thinkingLevel: "off", hasUI: options.hasUI ?? false, isIdle: () => true,
     sessionManager: { getBranch: () => branch, getSessionId: () => "fake-session" },
     modelRegistry: { find: (p, id) => available.find((m) => m.provider === p && m.id === id), getAvailable: () => available, refresh: async () => {}, getProviderAuth: async () => undefined },
     scopedModels: (options.scope ?? available).map((model) => ({ model, thinkingLevel: "off" })),
-    ui: new Proxy({ setStatus: (name, value) => statuses.set(name, value) }, { get: (obj, k) => obj[k] ?? (() => {}) }) };
+    ui: new Proxy({ setStatus: (name, value) => statuses.set(name, value), theme: { fg: (_color, text) => text } }, { get: (obj, k) => obj[k] ?? (() => {}) }) };
   const input = async (images, text = "continue the fix") => handlers.get("input")({ text, source: "interactive", images }, ctx);
   const failure = async (reason = "429 credits_required", content = []) => {
     const message = { role: "assistant", provider: ctx.model.provider, model: ctx.model.id, stopReason: "error", errorMessage: reason, content };
@@ -69,8 +77,10 @@ async function scenario(options, fn) {
   const settle = async (extra = {}) => handlers.get("agent_before_settle")({ outcome: "error", context: { pendingMessages: [], contextMessages: branch.filter((e) => e.message).map((e) => e.message) }, ...extra }, ctx);
   try {
     await handlers.get("session_start")({}, ctx);
-    await handlers.get("model_select")({}, ctx); // manual pin
-    await fn({ handlers, ctx, input, failure, settle, switches, sent, branch, current, native, or, fable, statuses, dir });
+    if (options.manualPin !== false) await handlers.get("model_select")({}, ctx); // manual pin
+    await fn({ handlers, ctx, input, failure, settle, switches, sent, branch, current, native, or, fable, statuses, dir,
+      thinkingSets, commands, shortcuts, thinkingLevel: () => thinking,
+      manualThinking: async (level) => { thinking = level; await handlers.get("thinking_level_select")({ level }, ctx); } });
   } finally {
     await handlers.get("session_shutdown")({}, ctx);
     if (oldDir === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = oldDir;
@@ -81,11 +91,12 @@ async function scenario(options, fn) {
 
 describe("exhaustion handoff runtime (fake registry/provider)", { concurrency: 1 }, () => {
   for (const tier of ["quick", "coding"]) it(`hands off ${tier} strictly above 95% session used despite weekly headroom; native precedes configured OpenRouter`, async () => {
-    await scenario({ tier, strategy: "cheapest", quota: { anthropic: { sessionRemainingFraction: 0.04, weeklyRemainingFraction: 0.8 } } }, async ({ input, ctx, switches, native, handlers, sent, statuses }) => {
+    await scenario({ tier, strategy: "cheapest", fableProvider: "other-native", quota: { anthropic: { sessionRemainingFraction: 0.04, weeklyRemainingFraction: 0.8 } } }, async ({ input, ctx, switches, native, handlers, sent }) => {
       assert.equal((await input()).action, "continue");
       assert.equal(key(ctx.model), key(native));
       assert.deepEqual(switches, [key(native)]);
-      assert.ok(!/pinned/.test(statuses.get("bifrost-state")), "successful self-switch does not re-pin");
+      assert.equal((await input(undefined, "explain sourdough starter feeding schedule")).action, "continue");
+      assert.deepEqual(switches, [key(native)], "the next prompt keeps the handoff replacement");
       const context = await handlers.get("context")({ messages: [] }, ctx);
       assert.match(context.messages[0].content, /Completed: changed example.ts once/);
       assert.match(context.messages[0].content, /do not repeat completed tool calls/);
@@ -204,11 +215,16 @@ describe("exhaustion handoff runtime (fake registry/provider)", { concurrency: 1
     });
   });
   for (const switchFailure of [true, "throw"]) it(`does not continue or inject after switch failure (${switchFailure})`, async () => {
-    await scenario({ switchFailure }, async ({ input, failure, settle, ctx, current, handlers }) => {
+    await scenario({ switchFailure }, async ({ input, failure, settle, ctx, current, handlers, switches, sent }) => {
       await input(); await failure();
       assert.equal(await settle(), undefined);
       assert.equal(key(ctx.model), key(current));
       assert.equal(await handlers.get("context")({ messages: [] }, ctx), undefined);
+      const failedSwitches = switches.length;
+      assert.equal((await input(undefined, "explain sourdough starter feeding schedule")).action, "continue");
+      assert.equal(key(ctx.model), key(current), "failed fallback keeps the old pin");
+      assert.equal(switches.length, failedSwitches, "failed fallback does not trigger unrelated rerouting");
+      assert.equal(sent.length, 0, "failed fallback never replays the prompt");
     });
   });
   it("keeps image capability across the handoff", async () => {
@@ -265,6 +281,102 @@ describe("exhaustion handoff runtime (fake registry/provider)", { concurrency: 1
       await input(); await failure(); assert.equal((await settle()).continue, true);
       await failure(); assert.equal(await settle(), undefined);
       assert.equal(switches.length, 1);
+    });
+  });
+});
+
+describe("sticky routed configuration (fake registry/provider)", { concurrency: 1 }, () => {
+  const reasoning = (provider, id) => ({ ...model(provider, id), reasoning: true });
+  const sticky = (extra = {}) => {
+    const current = reasoning("anthropic", "opus");
+    const writer = reasoning("writer", "prose");
+    return { current, writer, options: { manualPin: false, current, available: [current, writer], configured: [current],
+      models: { writing: [key(writer)] }, general: [writer], thinking: { mode: "apply" }, categoryStrategies: { coding: "first", writing: "first" },
+      rules: [{ pattern: "\\bcode\\b", model: "coding" }, { pattern: "\\bpoem\\b", model: "writing" }], ...extra } };
+  };
+
+  it("pins the first routed model and thinking even when already active; later unrelated topics keep both without rerouting", async () => {
+    const { current, options } = sticky();
+    await scenario(options, async ({ input, ctx, switches, thinkingSets, thinkingLevel }) => {
+      assert.equal((await input(undefined, "fix the code in the parser module")).action, "continue");
+      assert.equal(key(ctx.model), key(current));
+      const level = thinkingLevel();
+      const sets = thinkingSets.length;
+      assert.ok(sets > 0, "initial route applies thinking");
+      for (const text of ["write a poem about sourdough starter", "plan quarterly budget spreadsheet formulas"]) {
+        assert.equal((await input(undefined, text)).action, "continue");
+      }
+      assert.deepEqual(switches, [], "pinned prompts must not reroute");
+      assert.equal(key(ctx.model), key(current));
+      assert.equal(thinkingLevel(), level);
+      assert.equal(thinkingSets.length, sets, "pinned prompts must not recompute thinking");
+    });
+  });
+
+  it("manual model and thinking choices stay sticky until command unpin resumes full routing", async () => {
+    const { current, writer, options } = sticky();
+    await scenario(options, async ({ input, ctx, handlers, commands, switches, thinkingSets, thinkingLevel, manualThinking }) => {
+      await input(undefined, "fix the code in the parser module");
+      ctx.model = writer;
+      await handlers.get("model_select")({}, ctx);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await manualThinking("high");
+      await input(undefined, "fix the code in a different subsystem");
+      assert.equal(key(ctx.model), key(writer));
+      assert.equal(thinkingLevel(), "high");
+      assert.deepEqual(switches, []);
+
+      const before = thinkingSets.length;
+      await commands.get("bifrost").handler("unpin", ctx);
+      await input(undefined, "code");
+      assert.equal(key(ctx.model), key(current));
+      assert.ok(thinkingSets.length > before, "unpin resumes automatic thinking");
+    });
+  });
+
+  for (const [mode, keyName, binding] of [["off", "unpin", "ctrl+delete"], ["advisory", "toggle", "ctrl+p"]]) {
+    it(`the configured ${keyName} shortcut preserves explicit ${mode} thinking mode while releasing both locks`, async () => {
+      const { writer, options } = sticky({ thinking: { mode }, keys: { [keyName]: binding }, hasUI: true });
+      await scenario(options, async ({ input, ctx, shortcuts, switches, thinkingSets, manualThinking, statuses }) => {
+        await input(undefined, "fix the code in the parser module");
+        await manualThinking("high");
+        await shortcuts.get(binding).handler(ctx);
+        assert.doesNotMatch(statuses.get("bifrost-state"), /think:pinned/, "thinking lock is released");
+        const before = thinkingSets.length;
+        await input(undefined, "writing draft release notes");
+        assert.equal(key(ctx.model), key(writer), "model lock is released");
+        assert.deepEqual(switches, [key(writer)], "routing resumes on the next prompt");
+        assert.equal(thinkingSets.length, before, `${mode} mode remains non-applying after thinking lock release`);
+      });
+    });
+  }
+
+  it("the configured unpin shortcut resumes model and thinking routing", async () => {
+    const { writer, options } = sticky({ keys: { unpin: "ctrl+delete" } });
+    await scenario(options, async ({ input, ctx, shortcuts, switches, thinkingSets }) => {
+      await input(undefined, "fix the code in the parser module");
+      const before = thinkingSets.length;
+      await shortcuts.get("ctrl+delete").handler(ctx);
+      await input(undefined, "writing draft release notes");
+      assert.equal(key(ctx.model), key(writer));
+      assert.deepEqual(switches, [key(writer)]);
+      assert.ok(thinkingSets.length > before, "shortcut unpin resumes automatic thinking");
+    });
+  });
+
+  it("an explicit tier override replaces the sticky configuration until manually unpinned", async () => {
+    const { current, writer, options } = sticky();
+    await scenario(options, async ({ input, ctx, switches, thinkingSets }) => {
+      await input(undefined, "fix the code in the parser module");
+      const override = await input(undefined, "writing draft release notes for the change");
+      assert.equal(override.action, "transform");
+      assert.equal(key(ctx.model), key(writer));
+      const sets = thinkingSets.length;
+      await input(undefined, "fix the code in a different subsystem");
+      assert.equal(key(ctx.model), key(writer));
+      assert.deepEqual(switches, [key(writer)]);
+      assert.equal(thinkingSets.length, sets, "replacement thinking remains sticky");
+      assert.notEqual(key(ctx.model), key(current));
     });
   });
 });

@@ -2,6 +2,13 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.17.1 - 01-11-2026
+
+### Fixed
+- The routed model and thinking configuration stay pinned across unrelated topics; topic changes no longer auto-unpin, and a successful quota/error fallback replacement becomes the new pin without replaying the prompt.
+- Explicit tier overrides (e.g. `frontier debug ...`) replace the pin and remain sticky; `/bifrost unpin` clears model and thinking locks without changing the selected thinking mode; unpin/toggle shortcuts no longer force `apply` thinking mode.
+- PowerShell credential read runs hidden (`-WindowStyle Hidden`) to avoid a console window flash.
+
 ## 4.17.0 - 18-10-2026
 
 ### Added

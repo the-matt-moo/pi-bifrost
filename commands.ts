@@ -1438,10 +1438,11 @@ export function createCommandRouter(
     }),
     exact("unpin", "Resume routing", (_, ctx) => {
       state.pinned = false;
+      state.thinkingPinned = false;
       state.saveModeState();
       syncBifrostModeStatus(ctx, state);
       clearBifrostWidgets(ctx);
-      log(ctx, "Bifrost unpinned");
+      log(ctx, "Bifrost unpinned (model + thinking)");
     }),
     exact("silence", "Hide Bifrost output", (_, ctx) => {
       state.silent = true;
