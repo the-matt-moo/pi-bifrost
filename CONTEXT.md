@@ -25,7 +25,7 @@ A model that matches a tier's pattern list. Resolved from pi's model registry. A
 A string that resolves to models in pi's registry. Two forms: exact `provider/id` (e.g. `anthropic/claude-opus-4-5`) or bare substring (e.g. `qwen2.5-coder` matches any provider containing that string).
 
 **Pin**:
-Freeze the current model and stop automatic routing. Triggered automatically when the user runs `/model`, or manually via `/bifrost pin`. Reversed by `/bifrost unpin`.
+Freeze the current model and stop automatic routing. A pin is **manual** (`/model`, `/bifrost pin`, pin shortcuts, explicit tier overrides) or **automatic** (set by a successful route). Handoffs keep the origin. With opt-in `topicRouting`, Jev may re-route an automatic pin when a prompt starts an independent task. Reversed by `/bifrost unpin`.
 
 **Config layer**:
 One of four config sources merged in order: extension default → global (`~/.pi/agent/`) → project-local (`.pi/`) → project root. Later layers override earlier ones. The rules file (`bifrost-routes.json`) is loaded separately and overrides inline `rules` in `bifrost.json`.

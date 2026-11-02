@@ -24,6 +24,11 @@
     "maxTokens": 8
   },
 
+  "topicRouting": {
+    "enabled": false,
+    "confidenceThreshold": 0.9
+  },
+
   "cache": {
     "enabled": true,
     "maxEntries": 500,

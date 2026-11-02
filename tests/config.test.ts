@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  mergeConfig,
   validateConfig,
   isStrictCategory,
   generateTierDescriptions,
@@ -23,6 +24,20 @@ describe("validateConfig", () => {
   it("returns no issues for a valid config", () => {
     const issues = validateConfig(baseConfig);
     assert.equal(issues.length, 0);
+  });
+
+  it("validates topicRouting and merges it key by key", () => {
+    assert.deepEqual(validateConfig({ ...baseConfig, topicRouting: { enabled: true, confidenceThreshold: 0.9 } }), []);
+    for (const confidenceThreshold of [-0.1, 1.1, Number.NaN, "0.9" as unknown as number]) {
+      const issues = validateConfig({ ...baseConfig, topicRouting: { confidenceThreshold } });
+      assert.ok(issues.some((i) => i.severity === "error" && i.message.includes("topicRouting.confidenceThreshold")));
+    }
+    const enabledIssues = validateConfig({ ...baseConfig, topicRouting: { enabled: "yes" as unknown as boolean } });
+    assert.ok(enabledIssues.some((i) => i.message.includes("topicRouting.enabled")));
+    assert.deepEqual(
+      mergeConfig({ topicRouting: { enabled: false, confidenceThreshold: 0.9 } }, { topicRouting: { enabled: true } }).topicRouting,
+      { enabled: true, confidenceThreshold: 0.9 },
+    );
   });
 
   it("errors when models is empty (two errors: no tiers + default missing)", () => {

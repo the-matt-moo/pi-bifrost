@@ -2,10 +2,15 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.18.0 - 01-11-2026
+
+### Added
+- Opt-in `topicRouting` (default off, `confidenceThreshold` default 0.90). When enabled, Jev checks each prompt under an automatic pin: a confident continuation keeps the pinned model and thinking; a confident independent task re-runs normal routing and a successful route becomes the new automatic pin. Low confidence asks "Keep current route" or "Re-evaluate routing"; cancel, no UI, subagents, and any Jev failure keep the pin. Manual pins (`/model`, `/bifrost pin`, pin shortcuts) and explicit tier overrides are never checked; quota/error handoffs keep the pin's origin. Jev sees only bounded recent user prompts.
+
 ## 4.17.1 - 01-11-2026
 
 ### Fixed
-- The routed model and thinking configuration stay pinned across unrelated topics; topic changes no longer auto-unpin, and a successful quota/error fallback replacement becomes the new pin without replaying the prompt.
+- The routed model and thinking configuration stay pinned across subsequent prompts regardless of topic; only an explicit tier override, manual unpin, or required quota/error fallback changes the pin. Successful fallback replacements become the new pin without replaying the prompt.
 - Explicit tier overrides (e.g. `frontier debug ...`) replace the pin and remain sticky; `/bifrost unpin` clears model and thinking locks without changing the selected thinking mode; unpin/toggle shortcuts no longer force `apply` thinking mode.
 - PowerShell credential read runs hidden (`-WindowStyle Hidden`) to avoid a console window flash.
 

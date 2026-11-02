@@ -31,7 +31,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 | Model discovery | Probes all Pi models | Adds `--scoped` (Pi enabled-models only, always included when requested regardless of discovery errors) and `--free` (top 5 OpenRouter free models by collection ranking, or top 5 fastest if ranking fetch fails) flags for `init` and `update`; `update --free` enforces the same cap |
 | Candidate scoping | Full registry | Shared healthy-model resolution intersects configured candidates with Pi's scope, including caller-supplied candidates; handoffs never infer models from the registry |
 | Image prompts | Routed like text-only prompts | Prefers vision-capable models; if the selected tier cannot take images, Bifrost falls back to higher tiers with image support |
-| Pin quota safety | Manual pin remains until explicitly removed | Pins remain sticky across topics. Required quota/error handoffs may replace the active model; a successful replacement becomes the new pin, without replaying the prompt |
+| Pin quota safety | Manual pin remains until explicitly removed | Pins remain sticky across topics. Required quota/error handoffs may replace the active model; a successful replacement becomes the new pin, without replaying the prompt. Opt-in `topicRouting` lets Jev re-route automatic pins on independent tasks |
 | Reliability | Threshold-based circuit breaker | Final runtime errors open the circuit, including pinned/manual runs; bounded same-category continuations preserve completed work without prompt replay, prefer native providers, and use configured scoped OpenRouter only outside ultra |
 | Stale-registry warnings | Warning shown on stale host registry | A strict-tier "no healthy model" warning is re-checked after a single registry refresh before being shown; the warning appears only when the tier is genuinely unavailable due to circuits or quota exhaustion. Session-start candidate validation also awaits a registry refresh so dynamic provider models aren't flagged as spuriously unresolvable on reload |
 | Config reconciliation | `init` only | Adds `/bifrost update --scoped/--free` to preview and merge discovery results while preserving manual entries |
@@ -270,6 +270,18 @@ Registry refreshes use stale-while-revalidate: existing models route the current
 
 ### 4. Model Autopinning
 To prevent context-loss from per-prompt model churn, Bifrost **auto-pins the routed model and applied thinking configuration**, including when the model was already active. Later prompts keep that configuration regardless of topic. Explicit tier overrides (e.g. `frontier debug this`) replace the pin, and successful quota/error fallback replacements become the new pin. `/bifrost unpin` or the configured unpin shortcut resumes routing; deliberate `off`/`advisory`/`apply` thinking mode remains unchanged. Autopinning is session-local and never persisted.
+
+#### Optional topic routing
+`"topicRouting": { "enabled": true }` (default `false`) lets Jev decide whether a prompt under an **automatic** pin continues the pinned task or starts an independent one. It checks every such prompt, with no keyword pre-filter. Different activities in the same project or task (planning, implementing, debugging, testing, reviewing, documenting) count as continuation.
+
+- **Confident continuation** (confidence `>= confidenceThreshold`, default `0.90`): the pinned model and thinking stay unchanged.
+- **Confident independent task**: normal tier routing runs again. A successful route becomes the new automatic pin; if no healthy model is found or the switch fails, the old pin stays and the prompt continues on it. Prompts are never replayed.
+- **Low confidence** (either answer): Bifrost asks *Keep current route* or *Re-evaluate routing*. Cancel, no UI, and subagent sessions keep the pin.
+- **Failures** (missing credentials, HTTP or transport errors, timeout, malformed answer) keep the pin without asking. `/bifrost debug` shows the last topic decision.
+- **Exempt**: manual pins (`/model`, `/bifrost pin`, pin and toggle shortcuts) and explicit tier overrides (`frontier ...`, `/coding ...`). The quota guard runs first; quota/error handoffs keep the pin's origin.
+- If you pin manually, change the model or thinking level, or unpin while Bifrost is waiting for Jev or your answer, your change wins and the pending topic route is dropped.
+
+It uses the Jev entries in `classifier.model` and `classifier.fallbackModels` (direct TypeSafe first, then OpenRouter), the same credentials, and `classifier.timeoutMs`/`maxAttempts`. Non-Jev classifier models are ignored. Enabling it permits these calls even when `classifier.enabled` is `false`. Jev receives one Choice question with a JSON state containing only the prompt that started the pin and up to 3 recent user prompts (each stored and sent capped at 1,000 characters), plus the current prompt (sent capped at 4,000 characters). Assistant replies, tool output, and files are never sent. Topic-check history is kept in memory only; topic-check diagnostics do not log prompt text.
 
 ### 5. Thinking Mode Steering
 If `"thinking": { "mode": "apply" }` is set in config, Bifrost assesses prompt complexity to dynamically steer the selected model's **thinking level/effort**.

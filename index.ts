@@ -6,7 +6,11 @@ import {
   classifyWithLLM as invokeClassifier,
   jevClassifierForReference,
   isJevModelReference,
+  judgeTopicWithJev,
+  clipTopicPrompt,
+  TOPIC_RECENT_PROMPTS,
   type ClassifierModel,
+  type JevClassifier,
 } from "./classifier.js";
 
 import {
@@ -34,6 +38,7 @@ import {
   validateConfig,
   generateTierDescriptions,
   isStrictCategory,
+  DEFAULT_TOPIC_CONFIDENCE_THRESHOLD,
   type BifrostConfig,
 } from "./config.js";
 import {
@@ -58,7 +63,7 @@ import { ReliabilityStore } from "./reliability-store.js";
 import { isModelUnavailable, isRetryableProviderError, isRetryableProviderLimit } from "./reliability.js";
 import { loadRuntimeState, runtimeStatePath, saveRuntimeState, DEFAULT_RUNTIME_STATE, type RuntimeModeState } from "./runtime-state.js";
 import { cleanupSessionState, scheduleSessionCleanup } from "./session-cleanup.js";
-import { createCommandRouter, getBifrostCommandCompletions, log, logOverwrite, uiBusy, uiDone, setBifrostSilent, syncBifrostModeStatus, clearBifrostWidgets, formatBifrostRouting, isChildSession, type BifrostState } from "./commands.js";
+import { createCommandRouter, getBifrostCommandCompletions, log, logOverwrite, uiBusy, uiDone, setBifrostSilent, syncBifrostModeStatus, clearBifrostWidgets, formatBifrostRouting, isChildSession, setPin, type BifrostState } from "./commands.js";
 import { setupDebug, debug, debugMeasure } from "./debug.js";
 import { parseInlineOverride } from "./inline-override.js";
 import {
@@ -265,7 +270,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       && entry.message.content.some((block) => block.type === "image"));
   }
 
-  async function switchForHandoff(ctx: ExtensionContext, current: Model<Api>, tier: string | undefined, images: boolean): Promise<Model<Api> | undefined> {
+  async function switchForHandoff(ctx: ExtensionContext, current: Model<Api>, tier: string | undefined, images: boolean, prompt?: string): Promise<Model<Api> | undefined> {
     const next = selectHandoffModel(ctx, state.config, current, tier, state.reliabilityStore.getState(), quotaStore.getSnapshot(), images);
     if (!next || !tier) return undefined;
     const document = createHandoff(branch(ctx), modelKey(current), modelKey(next), tier);
@@ -280,12 +285,89 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }
     pendingHandoff = { target: modelKey(next), content: document };
     state.modelCategory = tier;
-    state.pinned = true;
+    // A handoff from no pin starts a new automatic pin; never inherit history from before an unpin.
+    if (!state.pinned) resetTopicHistory(prompt);
+    // A required handoff inherits the pin origin: manual stays protected, auto stays topic-eligible.
+    setPin(state, state.pinned ? state.pinOrigin ?? "manual" : "auto");
     state.saveModeState();
     syncBifrostModeStatus(ctx, state);
     return next;
   }
   const sessionContext = new SessionRoutingContext();
+  // Topic-check input: raw user prompts held in memory only, anchored to the prompt that set the pin.
+  let topicAnchor: string | undefined;
+  let topicRecent: string[] = [];
+  function resetTopicHistory(anchor: string | undefined): void {
+    topicAnchor = anchor === undefined ? undefined : clipTopicPrompt(anchor);
+    topicRecent = [];
+  }
+  function rememberTopicPrompt(prompt: string): void {
+    if (topicAnchor === undefined) topicAnchor = clipTopicPrompt(prompt);
+    else topicRecent = [...topicRecent, clipTopicPrompt(prompt)].slice(-TOPIC_RECENT_PROMPTS);
+  }
+
+  interface TopicSnapshot { revision: number; model: string; enabled: boolean; thinkingPinned: boolean }
+  const topicSnapshot = (ctx: ExtensionContext): TopicSnapshot => ({
+    revision: state.pinRevision ?? 0,
+    model: modelKey(ctx.model),
+    enabled: state.enabled,
+    thinkingPinned: state.thinkingPinned,
+  });
+  // Manual controls used while Jev or the user was deciding win over the pending topic action.
+  const topicStale = (ctx: ExtensionContext, snapshot: TopicSnapshot): boolean =>
+    !state.pinned || state.pinOrigin !== "auto" || (state.pinRevision ?? 0) !== snapshot.revision
+    || modelKey(ctx.model) !== snapshot.model || state.enabled !== snapshot.enabled
+    || state.thinkingPinned !== snapshot.thinkingPinned;
+
+  type TopicDecision =
+    | { readonly reroute: false; readonly reason: string }
+    | { readonly reroute: true; readonly reason: string; readonly snapshot: TopicSnapshot };
+
+  /** Opt-in: ask Jev whether a prompt under an automatic pin continues the pinned task. Any doubt keeps the pin. */
+  async function checkTopic(ctx: ExtensionContext, prompt: string, isChild: boolean): Promise<TopicDecision> {
+    const topicConfig = state.config.topicRouting;
+    if (topicConfig?.enabled !== true) return { reroute: false, reason: "" };
+    const keep = (reason: string): TopicDecision => ({ reroute: false, reason: `topic: ${reason}` });
+    if (state.pinOrigin !== "auto") return keep("manual pin");
+    if (topicAnchor === undefined) return keep("no task history");
+    const models = classifierModelPatterns(state.config)
+      .map((pattern) => jevClassifierForReference(pattern, state.config.classifier?.jevCredentialTarget))
+      .filter((model): model is JevClassifier => model !== undefined);
+    const snapshot = topicSnapshot(ctx);
+    setBifrostWorkingMessage(ctx, "Bifrost checking topic...");
+    let judgment: Awaited<ReturnType<typeof judgeTopicWithJev>>;
+    try {
+      judgment = await judgeTopicWithJev(ctx, models, [topicAnchor, ...topicRecent], prompt, {
+        timeoutMs: state.config.classifier?.timeoutMs ?? 10_000,
+        maxAttempts: state.config.classifier?.maxAttempts ?? 2,
+        signal: ctx.signal,
+      });
+    } finally {
+      setBifrostWorkingMessage(ctx, undefined);
+    }
+    if (judgment.status === "failed") return keep(`kept, ${judgment.reason}`);
+    if (topicStale(ctx, snapshot)) return keep("kept, routing changed during check");
+    const configured = topicConfig.confidenceThreshold;
+    const threshold = typeof configured === "number" && configured >= 0 && configured <= 1
+      ? configured
+      : DEFAULT_TOPIC_CONFIDENCE_THRESHOLD;
+    const verdict = `${judgment.choice} ${judgment.confidence.toFixed(2)}`;
+    if (judgment.confidence >= threshold) {
+      return judgment.choice === "switch" ? { reroute: true, reason: `topic: ${verdict}`, snapshot } : keep(verdict);
+    }
+    if (!ctx.hasUI || isChild) return keep(`kept, unsure ${verdict}`);
+    let picked: string | undefined;
+    try {
+      picked = await ctx.ui.select(
+        `Bifrost: Jev is unsure whether this prompt continues the pinned task (${verdict}).`,
+        ["Keep current route", "Re-evaluate routing"],
+      );
+    } catch { /* cancel keeps the pin */ }
+    if (topicStale(ctx, snapshot)) return keep("kept, routing changed during confirmation");
+    return picked === "Re-evaluate routing"
+      ? { reroute: true, reason: `topic: re-evaluate confirmed (${verdict})`, snapshot }
+      : keep(`kept by user (${verdict})`);
+  }
   let lastRoutedPrompt: string | undefined;
   let pipeline: ClassificationPipeline | undefined;
   let startupValidated = false;
@@ -340,6 +422,8 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     thinkingLevel: "off",
     modelCategory: undefined,
     pinned: runtimeState.pinned,
+    pinOrigin: runtimeState.pinned ? "manual" : undefined,
+    pinRevision: 0,
     silent: runtimeState.silent,
     cacheEntries,
     reliabilityStore,
@@ -372,7 +456,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     state.enabled = nextState.enabled;
     state.classifierEnabled = nextState.classifierEnabled;
     state.thinkingMode = nextState.thinkingMode ?? state.thinkingMode;
-    state.pinned = false;
+    setPin(state, undefined);
     state.silent = nextState.silent;
   }
 
@@ -593,7 +677,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     pi.registerShortcut(state.config.keys.pin as Parameters<typeof pi.registerShortcut>[0], {
       description: "Pin Bifrost to the current model",
       handler: async (ctx) => {
-        state.pinned = true;
+        setPin(state, "manual");
         state.saveModeState();
         lastSeenModel = modelKey(ctx.model);
         syncBifrostModeStatus(ctx, state);
@@ -608,7 +692,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     description: "Unpin Bifrost model and thinking",
     handler: async (ctx) => {
       const wasPinned = state.pinned || state.thinkingPinned;
-      state.pinned = false;
+      setPin(state, undefined);
       state.thinkingPinned = false;
       state.saveModeState();
       syncBifrostModeStatus(ctx, state);
@@ -623,14 +707,14 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       description: "Toggle Bifrost pin on current model",
       handler: async (ctx) => {
         if (state.pinned) {
-          state.pinned = false;
+          setPin(state, undefined);
           state.thinkingPinned = false;
           state.saveModeState();
           syncBifrostModeStatus(ctx, state);
           clearBifrostWidgets(ctx);
           log(ctx, `Bifrost unpinned (was ${modelKey(ctx.model)})`);
         } else {
-          state.pinned = true;
+          setPin(state, "manual");
           state.saveModeState();
           lastSeenModel = modelKey(ctx.model);
           syncBifrostModeStatus(ctx, state);
@@ -644,6 +728,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     activeContext = ctx;
     loadSessionRuntimeState(ctx.sessionManager?.getSessionId?.());
+    resetTopicHistory(undefined);
     state.thinkingLevel = pi.getThinkingLevel();
     lastSeenModel = modelKey(ctx.model);
     setBifrostSilent(ctx, state.silent || isChildSession(ctx));
@@ -708,7 +793,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       log(ctx, "Bifrost: exhausted during this run; stopped at the request boundary. Review unfinished work before continuing.", "warning");
       return;
     }
-    const next = await switchForHandoff(ctx, ctx.model, tier, !!retry?.images?.length || hasImages(ctx));
+    const next = await switchForHandoff(ctx, ctx.model, tier, !!retry?.images?.length || hasImages(ctx), retry?.prompt || undefined);
     if (!next || !tier) {
       ctx.abort();
       pendingHandoff = undefined;
@@ -783,7 +868,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       return;
     }
     await quotaStore.refreshIfStale(Date.now());
-    const next = await switchForHandoff(ctx, ctx.model, retry.tier, !!retry.images?.length || hasImages(ctx));
+    const next = await switchForHandoff(ctx, ctx.model, retry.tier, !!retry.images?.length || hasImages(ctx), retry.prompt || undefined);
     if (!next) {
       log(ctx, `Bifrost: ${settled.model} failed; no healthy configured/scoped same-category handoff could be selected. Stopped without replay.`, "warning");
       return;
@@ -885,7 +970,8 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     }
 
     sessionContext.reset();
-    state.pinned = true;
+    resetTopicHistory(undefined);
+    setPin(state, "manual");
     // Determine which category (quick, general, writing, frontier, coding) the selected model belongs to
     state.modelCategory = ctx.model ? configuredCategory(ctx, ctx.model, state.config.models) : undefined;
     state.saveModeState();
@@ -954,33 +1040,51 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       && (isProviderQuotaExhausted(current, quota, state.config.quotaRouting, now)
         || isProviderSessionExhausted(current, quota, state.config.quotaRouting, now))) {
       const tier = currentTier;
-      const replacement = await switchForHandoff(ctx, current, tier, !!event.images?.length || hasImages(ctx));
+      const wasPinned = state.pinned;
+      const replacement = await switchForHandoff(ctx, current, tier, !!event.images?.length || hasImages(ctx), promptText);
       if (!replacement || !tier) {
         log(ctx, `Bifrost: ${modelKey(current)} exhausted; no safe configured/scoped same-category replacement. Stopped; selection unchanged.`, "warning");
         return { action: "handled" };
       }
       runtimeReliability.begin(modelKey(replacement), { prompt: promptText, images: event.images, tier, autoRetryCount: 0 });
+      // An explicit same-tier override is a manual choice even when quota forced the model.
+      if (forcedTier) setPin(state, "manual");
+      else if (wasPinned) rememberTopicPrompt(promptText);
       log(ctx, `Bifrost: ${modelKey(current)} exhausted; handoff to ${modelKey(replacement)} in ${tier}.`, "warning");
       return defaultAction;
     }
 
-    if (state.pinned) {
-      // A pin holds across topics; only explicit overrides, unpin, or exhaustion handoff move it.
-      if (!forcedTier) {
-        const tier = ctx.model && configuredCategory(ctx, ctx.model, state.config.models, state.modelCategory);
-        if (ctx.model) runtimeReliability.begin(modelKey(ctx.model), tier ? { prompt: promptText, images: event.images, tier, autoRetryCount: 0 } : undefined);
-        sessionContext.record(tier ?? state.config.default ?? "general", promptText);
-        debug("input", "bypass", { enabled: true, pinned: true });
-        syncBifrostModeStatus(ctx, state);
-        log(ctx, formatBifrostRouting("", modelKey(ctx.model), "", true));
-        return defaultAction;
-      }
+    // Continue on the current pinned model and thinking without rerouting.
+    const keepPinned = (reason: string) => {
+      const tier = ctx.model && configuredCategory(ctx, ctx.model, state.config.models, state.modelCategory);
+      if (ctx.model) runtimeReliability.begin(modelKey(ctx.model), tier ? { prompt: promptText, images: event.images, tier, autoRetryCount: 0 } : undefined);
+      sessionContext.record(tier ?? state.config.default ?? "general", promptText);
+      rememberTopicPrompt(promptText);
+      debug("input", "bypass", { enabled: true, pinned: true, topic: reason || undefined });
+      syncBifrostModeStatus(ctx, state);
+      log(ctx, formatBifrostRouting("", modelKey(ctx.model), reason, true));
+      return defaultAction;
+    };
 
-      state.pinned = false;
-      sessionContext.reset();
-      const reason = "manual inline override";
-      debug("input", "auto_unpin", { reason });
-      log(ctx, `Bifrost unpinned for ${reason}.`);
+    // Set only when an automatic pin is being re-evaluated; the old pin holds until a route succeeds.
+    let topicReroute: Extract<TopicDecision, { reroute: true }> | undefined;
+    if (state.pinned) {
+      // A pin holds across topics; only explicit overrides, unpin, exhaustion handoff, or opt-in topic routing move it.
+      if (!forcedTier) {
+        const topic = await checkTopic(ctx, promptText, isChild);
+        if (topic.reason) state.lastTopicDecision = topic.reason;
+        if (!topic.reroute) return keepPinned(topic.reason);
+        topicReroute = topic;
+        sessionContext.reset();
+        debug("input", "topic_reroute", { reason: topic.reason });
+        log(ctx, `Bifrost ${topic.reason}; re-evaluating routing.`);
+      } else {
+        setPin(state, undefined);
+        sessionContext.reset();
+        const reason = "manual inline override";
+        debug("input", "auto_unpin", { reason });
+        log(ctx, `Bifrost unpinned for ${reason}.`);
+      }
     }
 
     const endInput = debugMeasure("input", "total");
@@ -1038,6 +1142,10 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       uiDone(ctx);
       setBifrostWorkingMessage(ctx, undefined);
 
+      if (classification.kind === "unclassified" && topicReroute) {
+        endInput();
+        return keepPinned("topic: kept, no tier matched");
+      }
       if (classification.kind === "unclassified") {
         log(ctx, "Bifrost: no tier matched — using default model", "warning");
         debug("input", "unclassified");
@@ -1117,6 +1225,12 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         autoRetryCount: 0,
       };
 
+      // Manual pin/model/enable/thinking changes made while re-evaluating win over the topic route.
+      if (topicReroute && topicStale(ctx, topicReroute.snapshot)) {
+        endInput();
+        return keepPinned("topic: kept, routing changed during re-evaluation");
+      }
+
       // If selected model is half-open, mark trial in progress
       if (model) {
         const circuit = state.reliabilityStore.getCircuitState(modelKey(model));
@@ -1132,6 +1246,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         log(ctx, `Bifrost: tier "${tier}" matched but no healthy model available${why}`, "warning");
         syncBifrostModeStatus(ctx, state);
         endInput();
+        if (topicReroute) return keepPinned("topic: kept, no healthy model");
         return { action: "handled" };
       }
 
@@ -1165,12 +1280,17 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         log(ctx, `thinking: ${state.thinkingMode} ${decision.level} (${decision.summary})`);
       };
 
+      const pinRoute = () => {
+        // A topic re-evaluation replaces the old automatic pin only once its route succeeds.
+        if ((state.pinned && !topicReroute) || !pinSource) return;
+        setPin(state, pinSource === "inline" ? "manual" : "auto");
+        resetTopicHistory(promptText);
+        debug("input", "auto_pin", { model: modelKey(model), source: pinSource });
+        log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${pinSource}]`);
+      };
+
       if (modelKey(model) === modelKey(ctx.model)) {
-        if (!state.pinned && pinSource) {
-          state.pinned = true;
-          debug("input", "auto_pin", { model: modelKey(model), source: pinSource });
-          log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${pinSource}]`);
-        }
+        pinRoute();
         applyThinking();
         state.modelCategory = selectedTier;
         uiDone(ctx);
@@ -1201,11 +1321,15 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       uiDone(ctx);
       setBifrostWorkingMessage(ctx, undefined);
       // Every successful route, including an explicit override or fallback, becomes sticky.
-      if (ok && !state.pinned && pinSource) {
-        state.pinned = true;
-        debug("input", "auto_pin", { model: modelKey(model), source: pinSource });
-        log(ctx, `Bifrost auto-pinned to ${modelKey(model)} [${pinSource}]`);
+      // A manual change made while the topic route was switching keeps the host's choice; do not re-pin over it.
+      if (ok && topicReroute && (modelKey(ctx.model) !== modelKey(model)
+        || topicStale(ctx, { ...topicReroute.snapshot, model: modelKey(model) }))) {
+        debug("input", "topic_switch_superseded", { model: modelKey(ctx.model) });
+        log(ctx, "Bifrost topic route superseded by a manual change during the switch.");
+        endInput({ model: modelKey(ctx.model), ok: true });
+        return defaultAction;
       }
+      if (ok) pinRoute();
 
       if (!ok) {
         selfSelecting = false;
@@ -1215,6 +1339,8 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         syncBifrostModeStatus(ctx, state);
         log(ctx, `Bifrost: ${formatDiagnostic(diagnostic)}`, "error");
         endInput({ model: modelKey(model), ok: false });
+        // Continue on the old pin only if nothing moved it; otherwise fail closed.
+        if (topicReroute && !topicStale(ctx, topicReroute.snapshot)) return keepPinned("topic: kept, model switch failed");
         return { action: "handled" };
       }
 

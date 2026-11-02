@@ -59,6 +59,12 @@ export interface BifrostState {
     jevEffort?: number,
   ) => { level: ThinkingLevel; mode: string; summary: string };
   pinned: boolean;
+  /** Who set the current pin; only automatic pins are eligible for topic checks. */
+  pinOrigin?: PinOrigin;
+  /** Session-local generation, bumped on every pin change so stale async decisions are dropped. */
+  pinRevision?: number;
+  /** Last topic-check outcome, for `/bifrost debug`. */
+  lastTopicDecision?: string;
   silent: boolean;
   cacheEntries: CacheEntry[];
   reliabilityStore: ReliabilityStore;
@@ -75,6 +81,15 @@ export interface BifrostState {
   refreshRegistry: (ctx: ExtensionContext) => Promise<boolean>;
   scheduleCacheSave: () => void;
   flushCacheSave: () => Promise<void>;
+}
+
+export type PinOrigin = "auto" | "manual";
+
+/** Set or clear the model pin; every change bumps the pin revision. */
+export function setPin(state: Pick<BifrostState, "pinned" | "pinOrigin" | "pinRevision">, origin: PinOrigin | undefined): void {
+  state.pinned = origin !== undefined;
+  state.pinOrigin = origin;
+  state.pinRevision = (state.pinRevision ?? 0) + 1;
 }
 
 const silentContexts = new WeakSet<ExtensionContext>();
@@ -396,6 +411,7 @@ export function buildInitProposal(
     ...(existingConfig?.keys ? { keys: existingConfig.keys } : {}),
     ...(existingConfig?.tierHeuristics ? { tierHeuristics: existingConfig.tierHeuristics } : {}),
     ...(existingConfig?.thinking ? { thinking: existingConfig.thinking } : {}),
+    ...(existingConfig?.topicRouting ? { topicRouting: existingConfig.topicRouting } : {}),
     ...(existingConfig?.quotaRouting ? { quotaRouting: existingConfig.quotaRouting } : {}),
     ...(existingConfig?.strictCategories ? { strictCategories: existingConfig.strictCategories } : {}),
     ...(discovery ? { discovery } : existingConfig?.discovery ? { discovery: existingConfig.discovery } : {}),
@@ -455,7 +471,7 @@ function writeAndReloadConfig(config: BifrostConfig, state: BifrostState): void 
     silent: state.config.silent ?? false,
   });
   state.enabled = runtimeState.enabled;
-  state.pinned = runtimeState.pinned;
+  setPin(state, runtimeState.pinned ? "manual" : undefined);
   state.classifierEnabled = runtimeState.classifierEnabled;
   state.thinkingMode = runtimeState.thinkingMode ?? "off";
   state.silent = runtimeState.silent;
@@ -1430,14 +1446,14 @@ export function createCommandRouter(
       log(ctx, "Bifrost disabled");
     }),
     exact("pin", "Lock current model", (_, ctx) => {
-      state.pinned = true;
+      setPin(state, "manual");
       state.saveModeState();
       syncBifrostModeStatus(ctx, state);
       clearBifrostWidgets(ctx);
       log(ctx, "Bifrost pinned");
     }),
     exact("unpin", "Resume routing", (_, ctx) => {
-      state.pinned = false;
+      setPin(state, undefined);
       state.thinkingPinned = false;
       state.saveModeState();
       syncBifrostModeStatus(ctx, state);
@@ -1474,7 +1490,7 @@ export function createCommandRouter(
       state.enabled = runtimeState.enabled;
       state.classifierEnabled = runtimeState.classifierEnabled;
       state.thinkingMode = runtimeState.thinkingMode ?? "off";
-      state.pinned = runtimeState.pinned;
+      setPin(state, runtimeState.pinned ? "manual" : undefined);
       state.silent = runtimeState.silent;
       setBifrostSilent(ctx, state.silent);
       state.cacheEntries = loadCache(cachePath(process.cwd(), state.config.cache?.path));
@@ -1677,8 +1693,9 @@ export function createCommandRouter(
       const lines = [
         `cwd: ${process.cwd()}`,
         `enabled: ${state.enabled}`,
-        `pinned: ${state.pinned}`,
+        `pinned: ${state.pinned}${state.pinned ? ` (${state.pinOrigin ?? "manual"})` : ""}`,
         `classifierEnabled: ${state.classifierEnabled}`,
+        `topicRouting: ${JSON.stringify(state.config.topicRouting ?? { enabled: false })}${state.lastTopicDecision ? ` last=${state.lastTopicDecision}` : ""}`,
         `silent: ${state.silent}`,
         `default: ${state.config.default}`,
         `strategy: ${state.config.strategy}`,

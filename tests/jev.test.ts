@@ -5,8 +5,12 @@ import assert from "node:assert/strict";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   classifyWithLLM,
+  clipTopicPrompt,
   jevClassifierForReference,
   jevRequest,
+  jevTopicRequest,
+  judgeTopicWithJev,
+  parseTopicAnswer,
   type JevClassifier,
 } from "../classifier.ts";
 import { createPipeline } from "../classification-pipeline.ts";
@@ -161,5 +165,88 @@ describe("Jev classifier", () => {
       jevEffort: undefined,
     });
     assert.deepEqual(calls, ["/typesafe", "/openrouter"]);
+  });
+
+  it("topic request is one Choice question with bounded, JSON-encoded user prompts", () => {
+    const model = jevClassifierForReference("typesafe/jev-latest");
+    assert.ok(model);
+    const body = jevTopicRequest(model, ["a".repeat(5000), "b", "c", "d", "e"], "z".repeat(9000)) as {
+      model: string; state: string; questions: Record<string, { type: string; criteria: Record<string, string> }>;
+    };
+    assert.equal(body.model, "jev-latest");
+    assert.deepEqual(Object.keys(body.questions), ["topic"]);
+    assert.equal(body.questions.topic.type, "choice");
+    assert.deepEqual(Object.keys(body.questions.topic.criteria), ["continue", "switch"]);
+    const state = JSON.parse(body.state) as { earlierUserPrompts: string[]; currentUserPrompt: string };
+    assert.equal(state.earlierUserPrompts.length, 4, "anchor plus three recent prompts");
+    assert.ok(state.earlierUserPrompts[0].length <= 1_100);
+    assert.ok(state.currentUserPrompt.length <= 4_100);
+  });
+
+  it("clips topic prompts idempotently within the bound", () => {
+    const once = clipTopicPrompt("q".repeat(5000));
+    assert.ok(once.length <= 1000);
+    assert.equal(clipTopicPrompt(once), once);
+    assert.equal(clipTopicPrompt("short"), "short");
+    assert.ok(clipTopicPrompt("q".repeat(9000), 4000).length <= 4000);
+  });
+
+  it("accepts only a known choice with documented [0,1] confidence", () => {
+    const topic = (value: object) => ({ answers: { topic: value } });
+    assert.deepEqual(parseTopicAnswer(topic({ type: "choice", choice: "switch", confidence: 0.93 })), { choice: "switch", confidence: 0.93 });
+    assert.deepEqual(parseTopicAnswer(topic({ choice: "continue", confidence: 0 })), { choice: "continue", confidence: 0 });
+    for (const bad of [
+      null, {}, { answers: {} }, topic({ choice: "maybe", confidence: 0.9 }), topic({ choice: "switch" }),
+      topic({ choice: "switch", confidence: null }), topic({ choice: "switch", confidence: Number.NaN }),
+      topic({ choice: "switch", confidence: 1.01 }), topic({ choice: "switch", probabilities: { switch: 0.99 } }),
+      topic({ type: "noul", choice: "switch", confidence: 0.9 }),
+    ]) assert.equal(parseTopicAnswer(bad), undefined, JSON.stringify(bad));
+  });
+
+  it("tries direct TypeSafe before OpenRouter and bounds attempts and time", async (t) => {
+    const directKey = randomUUID();
+    const openRouterKey = randomUUID();
+    const calls: string[] = [];
+    const oldFetch = globalThis.fetch;
+    t.after(() => { globalThis.fetch = oldFetch; });
+    let mode: "fail-direct" | "hang" = "fail-direct";
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      calls.push(`${url} ${(init.headers as Record<string, string>).Authorization}`);
+      if (mode === "hang") return new Promise(() => {});
+      if (url.endsWith("/typesafe")) return new Response("{}", { status: 503 });
+      return Response.json({ answers: { topic: { type: "choice", choice: "continue", confidence: 0.97 } } });
+    }) as typeof fetch;
+    const direct: JevClassifier = { kind: "jev", id: "typesafe/jev-latest", provider: "typesafe", model: "jev-latest", endpoint: "http://fake/typesafe", credentialTarget: "t" };
+    const router: JevClassifier = { kind: "jev", id: "openrouter/~typesafe/jev-latest", provider: "openrouter", model: "~typesafe/jev-latest", endpoint: "http://fake/openrouter" };
+    const options = { timeoutMs: 50, maxAttempts: 2, credentialReader: async (target: string) => target === "t" ? directKey : undefined };
+
+    assert.deepEqual(await judgeTopicWithJev(context(openRouterKey), [direct, router], ["fix parser"], "add tests", options),
+      { status: "decided", choice: "continue", confidence: 0.97, model: router.id });
+    assert.deepEqual(calls, [`http://fake/typesafe Bearer ${directKey}`, `http://fake/openrouter Bearer ${openRouterKey}`]);
+
+    calls.length = 0;
+    assert.deepEqual(await judgeTopicWithJev(context(openRouterKey), [direct, router], ["x"], "y", { ...options, maxAttempts: 1 }),
+      { status: "failed", reason: "HTTP 503" });
+    assert.equal(calls.length, 1);
+
+    calls.length = 0;
+    mode = "hang";
+    const started = Date.now();
+    assert.deepEqual(await judgeTopicWithJev(context(openRouterKey), [direct, router], ["x"], "y", options), { status: "failed", reason: "timeout" });
+    assert.ok(Date.now() - started < 1_000);
+    assert.equal(calls.length, 1, "no further attempts after the shared budget expires");
+
+    mode = "fail-direct";
+    calls.length = 0;
+    assert.deepEqual(await judgeTopicWithJev(context(openRouterKey), [direct, router], ["x"], "y",
+      { ...options, maxAttempts: 1, credentialReader: async () => undefined }),
+    { status: "decided", choice: "continue", confidence: 0.97, model: router.id }, "missing direct key does not spend the only attempt");
+    assert.deepEqual(calls, [`http://fake/openrouter Bearer ${openRouterKey}`]);
+
+    assert.deepEqual(await judgeTopicWithJev(context(openRouterKey), [], ["x"], "y", options), { status: "failed", reason: "no Jev classifier configured" });
+    calls.length = 0;
+    assert.deepEqual(await judgeTopicWithJev(context(""), [direct], ["x"], "y", { ...options, credentialReader: async () => undefined }),
+      { status: "failed", reason: "no Jev credentials" });
+    assert.equal(calls.length, 0);
   });
 });

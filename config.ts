@@ -45,6 +45,16 @@ export interface ClassifierConfig {
   categoryDescriptions?: Record<string, string>;
 }
 
+/** Opt-in Jev check of whether a prompt continues an automatic pin's task. */
+export interface TopicRoutingConfig {
+  /** Default false. Also permits Jev topic calls when `classifier.enabled` is false. */
+  enabled?: boolean;
+  /** Minimum Jev confidence (0-1) to act without asking. Default 0.9. */
+  confidenceThreshold?: number;
+}
+
+export const DEFAULT_TOPIC_CONFIDENCE_THRESHOLD = 0.9;
+
 export interface ThinkingConfig {
   mode?: "off" | "advisory" | "apply";
   defaultLevel?: ThinkingLevel;
@@ -102,6 +112,7 @@ export interface BifrostConfig {
   discovery?: DiscoveryConfig;
   quotaRouting?: QuotaRoutingConfig;
   thinking?: ThinkingConfig;
+  topicRouting?: TopicRoutingConfig;
   tierHeuristics?: TierHeuristicsConfig;
   /** Categories that must not silently fall back to `default`/another
    *  category when their configured candidates are missing or unhealthy.
@@ -387,6 +398,15 @@ export function validateConfig(
   if (classifier?.jevCredentialTarget !== undefined && !classifier.jevCredentialTarget.trim()) {
     issues.push({ severity: "error", message: "Classifier jevCredentialTarget must not be empty." });
   }
+  const topic = config.topicRouting;
+  if (topic?.enabled !== undefined && typeof topic.enabled !== "boolean") {
+    issues.push({ severity: "error", message: `topicRouting.enabled must be a boolean, got ${topic.enabled}.` });
+  }
+  if (topic?.confidenceThreshold !== undefined &&
+      (typeof topic.confidenceThreshold !== "number" || !Number.isFinite(topic.confidenceThreshold)
+        || topic.confidenceThreshold < 0 || topic.confidenceThreshold > 1)) {
+    issues.push({ severity: "error", message: `topicRouting.confidenceThreshold must be between 0 and 1, got ${topic.confidenceThreshold}.` });
+  }
   const quota = config.quotaRouting;
   if (quota?.reservePercent !== undefined && (quota.reservePercent < 0 || quota.reservePercent > 1)) {
     issues.push({
@@ -495,6 +515,7 @@ export function mergeConfig(
   merged.reliability = mergeObj(base.reliability, override.reliability);
   merged.discovery = mergeObj(base.discovery, override.discovery);
   merged.quotaRouting = mergeObj(base.quotaRouting, override.quotaRouting);
+  merged.topicRouting = mergeObj(base.topicRouting, override.topicRouting);
   merged.tierHeuristics = mergeObj(base.tierHeuristics, override.tierHeuristics);
   return merged;
 }

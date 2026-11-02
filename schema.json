@@ -120,6 +120,9 @@
     "thinking": {
       "$ref": "#/definitions/ThinkingConfig"
     },
+    "topicRouting": {
+      "$ref": "#/definitions/TopicRoutingConfig"
+    },
     "cache": {
       "$ref": "#/definitions/CacheConfig"
     },
@@ -168,6 +171,25 @@
     }
   },
   "definitions": {
+    "TopicRoutingConfig": {
+      "type": "object",
+      "description": "Opt-in Jev topic check for automatic pins. When enabled, every prompt under an automatic pin asks the configured Jev classifier models (classifier.model, then classifier.fallbackModels; non-Jev entries are ignored) whether it continues the pinned task or starts an independent task. Jev sees only the prompt that started the pin and up to 3 recent user prompts (each stored in memory and sent capped at 1,000 characters), plus the current prompt (capped at 4,000 characters) \u2014 never assistant or tool output. Manual pins (/model, /bifrost pin, pin shortcuts) and explicit tier overrides are never checked. Failures keep the pin. Reuses classifier.timeoutMs, classifier.maxAttempts, and Jev credentials.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable the topic check. This is explicit permission for Jev topic calls even when classifier.enabled is false.",
+          "default": false
+        },
+        "confidenceThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum Jev confidence to act without asking. A confident 'continue' keeps the pinned model and thinking; a confident 'switch' re-runs normal tier routing. Lower confidence asks 'Keep current route' or 'Re-evaluate routing' in the Pi UI; cancel, no UI, and subagents keep the pin.",
+          "default": 0.9
+        }
+      }
+    },
     "ThinkingConfig": {
       "type": "object",
       "description": "Prompt-derived thinking recommendations. Defaults to off; apply requires explicit opt-in.",
