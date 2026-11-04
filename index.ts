@@ -1,5 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SettingsManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CHILD_ROUTE_ENTRY, noteChildSession } from "./child-session.ts";
+import { agentRoutingDefaultsFromConfig, loadAgentRoutingDefaults, resolveSpawnRoute, type AgentRoutingDefaults } from "./subagent-routing.ts";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
@@ -587,24 +589,23 @@ export default function bifrostExtension(pi: ExtensionAPI) {
 
   const handleCommand = createCommandRouter(state);
 
-  if (typeof pi.events?.on === "function" && typeof pi.events.emit === "function") {
-    pi.events.on("bifrost:rpc:v1:request", async (raw) => {
-      const result = await handleRpcRequest(raw, async (text) => {
-      if (!activeContext || !state.enabled) return null;
-
-      const classification = await getPipeline(activeContext).classify(text);
+  async function selectSpawnModel(ctx: ExtensionContext, text: string) {
+      // A delegated task must not inherit the parent's conversation momentum or sticky thinking.
+      const pipeline = buildPipeline(ctx, state.config, () => state.cacheEntries, state.classifierEnabled,
+        new SessionRoutingContext(), classifierCooldowns, cacheWriter.schedule);
+      const classification = await pipeline.classify(text);
       if (classification.kind !== "classified") return null;
 
       const tier = classification.tier;
-      const pattern = inferPattern(activeContext, tier);
+      const pattern = inferPattern(ctx, tier);
       const strategy = getStrategy(state.config.categoryStrategies, state.config.strategy, tier);
       const defaultTier = state.config.default;
-      const resolved = resolveModelWithFallback(activeContext, {
+      const resolved = resolveModelWithFallback(ctx, {
         requestedTier: tier,
         requestedPattern: pattern,
         requestedStrategy: strategy,
         defaultTier,
-        defaultPattern: defaultTier ? inferPattern(activeContext, defaultTier) : undefined,
+        defaultPattern: defaultTier ? inferPattern(ctx, defaultTier) : undefined,
         defaultStrategy: defaultTier
           ? getStrategy(state.config.categoryStrategies, state.config.strategy, defaultTier)
           : strategy,
@@ -612,35 +613,156 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         reliabilityConfig: state.config.reliability,
         quota: quotaStore.getSnapshot(),
         quotaConfig: state.config.quotaRouting,
-        requestedCandidates: diagnoseCandidates(activeContext, pattern).candidates,
+        requestedCandidates: diagnoseCandidates(ctx, pattern).candidates,
         strict: isStrictCategory(state.config, tier),
       });
       if (!resolved.selected) return null;
 
-      const selectedTier = resolved.selectedTier ?? tier;
-      const thinking = state.previewThinking?.(text, selectedTier, resolved.selected, classification.jevEffort) ?? { level: "off" };
-      return {
-        model: modelKey(resolved.selected),
-        thinking: { level: thinking.level },
-      };
+      return { model: resolved.selected, tier: resolved.selectedTier ?? tier, effort: classification.jevEffort };
+  }
+
+  function spawnThinking(text: string, model: Model<Api>, tier?: string, effort?: number): ThinkingLevel | undefined {
+    if (state.thinkingMode !== "apply") return undefined;
+    const decision = assessThinking({ text, turnDepth: 0, lastTurnFailed: false, lastTurnErrored: false, jevEffort: effort });
+    const level = capThinkingLevel(decision.defaulted ? state.config.thinking?.defaultLevel ?? "medium" : decision.level, [], {
+      free: billingClass(model) === "free", maxLevel: state.config.thinking?.maxLevel ?? "high",
+      tier: tier ?? "", tierCap: tier ? state.config.thinking?.byTier?.[tier] : undefined,
+    });
+    return clampToModel(level, model).level;
+  }
+
+  const SUBAGENTS_SERVICE_KEY = Symbol.for("@gotgenes/pi-subagents:service");
+  let unregisterSpawnHook: (() => void) | undefined;
+  let registeredSpawnHookService: unknown;
+
+  async function routeSubagentSpawn(
+    ctx: ExtensionContext,
+    type: string,
+    input: Record<string, unknown>,
+    defaults: AgentRoutingDefaults,
+    toolCallId?: string,
+    signal?: AbortSignal,
+  ) {
+    await quotaStore.refreshIfStale(Date.now());
+    const route = await resolveSpawnRoute(input, defaults, ctx, {
+      select: (text) => selectSpawnModel(ctx, text),
+      thinking: spawnThinking,
+      defaultThinking: SettingsManager.create(ctx.cwd).getDefaultThinkingLevel() ?? "medium",
+      validate: (model) => {
+        const resolved = resolveHealthyModel(ctx, [modelKey(model)], "first", state.reliabilityStore.getState(),
+          state.config.reliability, Date.now(), quotaStore.getSnapshot(), state.config.quotaRouting);
+        return resolved.selected ? undefined : "model is unavailable, outside scope, unhealthy, or quota-exhausted";
+      },
+    });
+    if (signal?.aborted || ctx.signal?.aborted) throw new Error("Subagent routing cancelled");
+    pi.appendEntry("bifrost-spawn-route", { toolCallId, agent: type, ...route });
+    debug("subagent", "spawn_route", { agent: type, ...route });
+    return route;
+  }
+
+  function ensureSpawnHook(): boolean {
+    const svc = (globalThis as Record<symbol, unknown>)[SUBAGENTS_SERVICE_KEY] as
+      | { registerSpawnHook?: (hook: (hookCtx: Record<string, unknown>) => Promise<unknown>) => () => void }
+      | undefined;
+    if (!svc || typeof svc.registerSpawnHook !== "function") {
+      unregisterSpawnHook = undefined;
+      registeredSpawnHookService = undefined;
+      return false;
+    }
+    if (registeredSpawnHookService === svc && unregisterSpawnHook) return true;
+    unregisterSpawnHook?.();
+    try {
+      unregisterSpawnHook = svc.registerSpawnHook(async (hookCtx) => {
+        const ctx = activeContext;
+        if (!ctx || !state.enabled || isChildSession(ctx)) return undefined;
+        const params = (hookCtx.params as Record<string, unknown> | undefined) ?? {};
+        if (params.resume) return undefined;
+        const type = typeof hookCtx.subagentType === "string" && hookCtx.subagentType.trim()
+          ? hookCtx.subagentType
+          : String(params.subagent_type ?? params.agent ?? "");
+        if (!type.trim()) return { error: "Bifrost: Missing subagent type" };
+        try {
+          const agentConfig = hookCtx.agentConfig as {
+            name?: string; model?: string; thinking?: string; locked?: unknown; enabled?: boolean; isDefault?: boolean;
+          } | undefined;
+          const defaults = agentConfig
+            ? agentRoutingDefaultsFromConfig(agentConfig)
+            : loadAgentRoutingDefaults(ctx.cwd, type);
+          const effectiveInput: Record<string, unknown> = { ...params };
+          if (hookCtx.modelLocked) delete effectiveInput.model;
+          if (hookCtx.thinkingLocked) delete effectiveInput.thinking;
+          const route = await routeSubagentSpawn(
+            ctx,
+            type,
+            effectiveInput,
+            defaults,
+            typeof hookCtx.toolCallId === "string" ? hookCtx.toolCallId : undefined,
+            hookCtx.signal as AbortSignal | undefined,
+          );
+          return { model: route.model, thinking: route.thinking };
+        } catch (error) {
+          return { error: `Bifrost: ${error instanceof Error ? error.message : "subagent routing failed"}` };
+        }
+      });
+      registeredSpawnHookService = svc;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  ensureSpawnHook();
+
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName !== "subagent" && event.toolName !== "Agent") return;
+    const input = event.input as Record<string, unknown>;
+    if (!state.enabled || isChildSession(ctx) || input.resume) return;
+    activeContext = ctx;
+    if (event.toolName === "subagent" && ensureSpawnHook()) return;
+    try {
+      const type = input.subagent_type ?? input.agent;
+      if (typeof type !== "string" || !type.trim()) throw new Error("Missing subagent type");
+      const defaults = loadAgentRoutingDefaults(ctx.cwd, type);
+      const route = await routeSubagentSpawn(ctx, type, input, defaults, event.toolCallId, ctx.signal);
+      input.model = route.model;
+      input.thinking = route.thinking;
+    } catch (error) {
+      return { block: true, reason: `Bifrost: ${error instanceof Error ? error.message : "subagent routing failed"}` };
+    }
+  });
+
+  const eventSubscriptions: (() => void)[] = [];
+  if (typeof pi.events?.on === "function" && typeof pi.events.emit === "function") {
+    eventSubscriptions.push(pi.events.on("subagents:child:session-created", (data) => noteChildSession(data)));
+    eventSubscriptions.push(pi.events.on("subagents:child:disposed", (data) => noteChildSession(data, true)));
+    eventSubscriptions.push(pi.events.on("bifrost:rpc:v1:request", async (raw) => {
+      // Child instances must not race the parent to answer its classifier RPC.
+      if (!activeContext || isChildSession(activeContext)) return;
+      const result = await handleRpcRequest(raw, async (text) => {
+        if (!state.enabled) return null;
+        const resolved = await selectSpawnModel(activeContext!, text);
+        if (!resolved) return null;
+        const level = spawnThinking(text, resolved.model, resolved.tier, resolved.effort)
+          ?? SettingsManager.create(activeContext!.cwd).getDefaultThinkingLevel() ?? "medium";
+        return { model: modelKey(resolved.model), thinking: { level: clampToModel(level, resolved.model).level } };
       });
 
       if (result.requestId && result.reply) {
         pi.events.emit(`bifrost:rpc:v1:reply:${result.requestId}`, result.reply);
       }
-    });
+    }));
 
     // Cross-extension signal: remote-pi emits this before sendUserMessage so
     // Bifrost can recognise the resulting extension-source input event and
     // route it like a locally-typed prompt.
-    pi.events.on("remote-pi:user-prompt", (payload: unknown) => {
+    eventSubscriptions.push(pi.events.on("remote-pi:user-prompt", (payload: unknown) => {
       if (
         typeof payload === "object" && payload !== null &&
         typeof (payload as { text?: unknown }).text === "string"
       ) {
-        queueRemoteText((payload as { text: string }).text);
+        if (activeContext && !isChildSession(activeContext)) queueRemoteText((payload as { text: string }).text);
       }
-    });
+    }));
   }
 
   pi.registerCommand("bifrost", {
@@ -726,12 +848,20 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    const isChild = isChildSession(ctx);
+    setBifrostSilent(ctx, state.silent || isChild);
+    if (isChild) {
+      if (!ctx.sessionManager?.getEntries?.().some((entry) => entry.type === "custom" && entry.customType === CHILD_ROUTE_ENTRY)) {
+        pi.appendEntry(CHILD_ROUTE_ENTRY, { owner: "spawn", model: modelKey(ctx.model), thinking: pi.getThinkingLevel(), fallback: "stop" });
+      }
+      return;
+    }
     activeContext = ctx;
+    ensureSpawnHook();
     loadSessionRuntimeState(ctx.sessionManager?.getSessionId?.());
     resetTopicHistory(undefined);
     state.thinkingLevel = pi.getThinkingLevel();
     lastSeenModel = modelKey(ctx.model);
-    setBifrostSilent(ctx, state.silent || isChildSession(ctx));
     syncBifrostModeStatus(ctx, state);
     clearBifrostWidgets(ctx);
     void quotaStore.refreshIfStale(Date.now());
@@ -778,7 +908,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   });
 
   pi.on("turn_start", async (event, ctx) => {
-    if (!state.enabled || !ctx.model) return;
+    if (!state.enabled || !ctx.model || isChildSession(ctx)) return;
     // Tools can spend quota between requests; a cached pre-input snapshot is insufficient.
     await quotaStore.refreshIfStale(Date.now(), event.turnIndex > 0);
     const quota = quotaStore.getSnapshot();
@@ -832,11 +962,17 @@ export default function bifrostExtension(pi: ExtensionAPI) {
         : undefined;
       runtimeReliability.begin(modelKey(ctx.model), retry);
     }
+    if (isChildSession(ctx)) return;
     const systemPrompt = frontierSystemPrompt(event.systemPrompt, state.modelCategory);
     return systemPrompt ? { systemPrompt } : undefined;
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (_event, ctx) => {
+    if (ctx && isChildSession(ctx)) return;
+    unregisterSpawnHook?.();
+    unregisterSpawnHook = undefined;
+    registeredSpawnHookService = undefined;
+    for (const unsubscribe of eventSubscriptions) unsubscribe();
     pendingHandoff = undefined;
     runtimeReliability.settle();
     cleanupSessionState();
@@ -854,7 +990,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
     const settled = runtimeReliability.settle();
     if (!settled || !state.enabled || state.config.reliability?.enabled === false) return;
     state.reliabilityStore.recordSettled(settled.model, settled.reason);
-    if (!settled.reason) return;
+    if (!settled.reason || isChildSession(ctx)) return;
 
     const retry = settled.retry;
     const retryable = isCreditsRequired(settled.reason) || isRetryableProviderLimit(settled.reason) || isRetryableProviderError(settled.reason) || isModelUnavailable(settled.reason);
@@ -889,6 +1025,7 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   });
 
   pi.on("thinking_level_select", async (event, ctx) => {
+    if (isChildSession(ctx)) return;
     if (selfSettingThinkingLevel === event.level) {
       selfSettingThinkingLevel = undefined;
       state.thinkingLevel = event.level;
@@ -908,7 +1045,8 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   });
 
   pi.on("model_select", async (_event, ctx) => {
-    setBifrostSilent(ctx, state.silent || isChildSession(ctx));
+    if (isChildSession(ctx)) return;
+    setBifrostSilent(ctx, state.silent);
     const selectedModel = modelKey(ctx.model);
     settlingModel = selectedModel;
     setTimeout(() => {
@@ -985,9 +1123,21 @@ export default function bifrostExtension(pi: ExtensionAPI) {
   });
 
   pi.on("input", async (event, ctx) => {
-    activeContext = ctx;
     const isChild = isChildSession(ctx);
     setBifrostSilent(ctx, state.silent || isChild);
+    // Passive subagent observation + early child guard — child sessions never re-route prompts.
+    if (isChild) {
+      debug("input", "subagent", {
+        source: "PI-subagent",
+        agent: process.env.PI_SUBAGENT_CHILD_AGENT,
+        model: modelKey(ctx.model),
+        thinkingLevel: ctx.thinkingLevel,
+        depth: process.env.PI_SUBAGENT_PARENT_DEPTH,
+        routing: "spawn-owned",
+      });
+      return { action: "continue" };
+    }
+    activeContext = ctx;
     // Safety: clear any guard left unconsumed from the previous turn so it can't wedge.
     // The current turn's thinking_level_select has already been delivered by now.
     selfSettingThinkingLevel = undefined;
@@ -998,17 +1148,6 @@ export default function bifrostExtension(pi: ExtensionAPI) {
       if (!consumeRemoteText(event.text)) return { action: "continue" };
     }
     clearBifrostWidgets(ctx);
-    // Passive subagent observation — logged even when routing is disabled,
-    // so child-session model usage stays visible in debug logs.
-    if (process.env.PI_SUBAGENT_RUN_ID || isChild) {
-      debug("input", "subagent", {
-        source: "PI-subagent",
-        agent: process.env.PI_SUBAGENT_CHILD_AGENT,
-        model: modelKey(ctx.model),
-        thinkingLevel: ctx.thinkingLevel,
-        depth: process.env.PI_SUBAGENT_PARENT_DEPTH,
-      });
-    }
     if (!state.enabled) {
       debug("input", "bypass", { enabled: false, pinned: state.pinned });
       syncBifrostModeStatus(ctx, state);

@@ -2,6 +2,16 @@
 
 All notable changes to pi-bifrost are documented here.
 
+## 4.18.1 - 03-11-2026
+
+### Changed
+- Subagent model and thinking are resolved once in the parent before spawn via `@gotgenes/pi-subagents` `registerSpawnHook` (with `tool_call` fallback): caller value, then agent-file value (respecting `locked:`), then Bifrost classification of the delegated task, then Pi's default thinking (`medium`). Model and thinking resolve independently. Invalid, out-of-scope, unhealthy, or ambiguous explicit models block the spawn with a reason instead of being replaced. Resumes keep their session's settings. Each decision is recorded as a `bifrost-spawn-route` session entry.
+- Child sessions are identified from pi-subagents lifecycle events and a persisted `bifrost-child-route` marker (session-path and env checks remain as fallbacks; ordinary forks are no longer treated as children). Children guard `session_start`, `input`, and `session_shutdown` early so they never overwrite parent context, re-route prompts, pin/adjust thinking, hand off on exhaustion/failure, or answer the parent's classifier RPC, while retaining passive debug logging and reliability observation.
+- The classifier RPC now uses the same spawn resolver, with fresh session context so parent conversation momentum and sticky thinking do not leak into delegated tasks.
+
+### Fixed
+- Launch Windows Credential Manager PowerShell queries via `credential-launcher.exe` to prevent console window flashes.
+
 ## 4.18.0 - 01-11-2026
 
 ### Added

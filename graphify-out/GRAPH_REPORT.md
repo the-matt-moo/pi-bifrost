@@ -1,17 +1,17 @@
-# Graph Report - pi-bifrost  (2026-10-18)
+# Graph Report - pi-bifrost  (2026-11-03)
 
 ## Corpus Check
-- 108 files · ~162,359 words
+- 113 files · ~171,934 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 6 file(s) not represented in the graph (top: (none) 4, .xml 1, .css 1)
 
 ## Summary
-- 1470 nodes · 2792 edges · 136 communities (96 shown, 40 thin omitted)
+- 1533 nodes · 2936 edges · 132 communities (90 shown, 42 thin omitted)
 - Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 117 edges (avg confidence: 0.92)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `b1b7928d`
+- Built from commit: `6403892c`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -23,13 +23,13 @@
 - package.json
 - Bifrost UI enhancement backlog
 - categoryStrategies
-- routing.ts
+- quota.ts
 - cache.ts
 - bifrost.json
 - advanced-classifier-prompt.json
 - Pi-Bifrost
 - ui-smoke.py
-- index.ts
+- resolveHealthyModel
 - models
 - thinking.ts
 - economical-frontier-reliability.json
@@ -38,39 +38,39 @@
 - compilerOptions
 - commands.ts
 - economical-frontier.json
-- Architecture map
+- ReliabilityStore
 - Changelog
 - ui-reliability-fake-provider.sh
 - ui-smoke-agent-tui.sh
-- ux-status.ts
+- routing.test.ts
 - Product
 - RuntimeReliabilityTracker
-- discovery.ts
+- modelKey
 - large-context.json
 - Recipes
-- bifrostExtension
+- routing.ts
 - classification-pipeline.ts
 - release.mjs
-- ref_node_test
+- decideThinking
 - rules-only-local.json
 - Pi-Bifrost Reliability System
 - exact-bindings.json
 - 1. `pi-model-router`: closest direct routing peer
-- category-commands.test.mjs
-- fake-provider-server.mjs
+- subagent-routing-host.test.mjs
+- credential-launcher.cs
 - ref_node_assert
 - exhaustion-handoff.test.mjs
 - task-aware-routing.json
 - OpenCode router landscape
-- SessionRoutingContext
+- Findings
 - Reliability v1 implementation review
 - classifier
-- Mistakes, gotchas & learnings
-- Design decisions & rationale
+- index.ts
+- result-viewer.ts
 - Pi extension router landscape
 - rpc.ts
-- Not yet implemented
-- Implemented: post-settlement failure tracking
+- How to add a feature
+- 4.14.1 - 01-10-2026
 - remote-prompt.test.ts
 - pi-bifrost
 - 2. `pi-router`: channel routing peer
@@ -79,13 +79,13 @@
 - 5. `pi-model-switch`: user/agent control peer
 - reliability
 - 4.1.0
-- 4.1.2
+- Mistakes, gotchas & learnings
 - 4.2.0
 - 4.4.0
 - 4.5.10 - 29-08-2026
 - 4.5.21 - 05-09-2026
-- Test infrastructure
-- diagnostics.ts
+- 4.16.0 - 15-10-2026
+- Design decisions & rationale
 - What each does well
 - Gaps worth considering
 - Recommendations
@@ -101,97 +101,93 @@
 - 4.5.15 - 01-09-2026
 - 4.5.16 - 01-09-2026
 - 4.5.6 - 29-08-2026
-- guessTier
+- 4.6.0 - 12-09-2026
 - 4.7.0 - 13-09-2026
-- debug
-- @earendil-works/pi-coding-agent
-- 4.11.4 - 20-09-2026
+- 4.5.12 - 30-08-2026
+- storage.ts
+- 4.11.0 - 19-09-2026
 - 4.11.5 - 26-09-2026
 - 4.13.0 - 27-09-2026
-- 4.14.1 - 01-10-2026
+- Not yet implemented
 - 4.14.2 - 03-10-2026
 - 4.14.4 - 04-10-2026
 - 4.14.5 - 04-10-2026
-- 4.15.0 - 04-10-2026
+- inline-override.test.ts
 - 4.15.1 - 04-10-2026
-- 4.15.3 - 07-10-2026
-- 4.16.0 - 15-10-2026
+- Implemented: post-settlement failure tracking
+- 4.17.0 - 18-10-2026
 - 4.1.1
-- 4.1.3
-- 4.1.4
-- 4.1.5
+- 4.5.7 - 29-08-2026
+- Test infrastructure
+- 4.5.3 - 28-08-2026
 - 4.1.6
 - 4.1.7
 - 4.1.8
 - 4.1.9
-- 4.2.1
+- Unreleased
 - 4.2.3
 - 4.3.2
 - 4.5.11 - 30-08-2026
-- 4.5.12 - 30-08-2026
+- 4.15.3 - 07-10-2026
 - 4.5.13 - 31-08-2026
 - 4.5.17 - 01-09-2026
 - 4.5.18 - 04-09-2026
 - 4.5.22 - 05-09-2026
-- result-viewer.ts
-- ThinkingSession
 - 4.5.4 - 28-08-2026
 - 4.5.5 - 29-08-2026
-- 4.5.7 - 29-08-2026
+- 4.17.1 - 01-11-2026
 - 4.5.8 - 29-08-2026
-- Credit-required rejection and scoped handoff
+- 4.1.3
 - 4.9.0 - 15-09-2026
 - 4.9.1 - 16-09-2026
-- debug.ts
-- ref_node_fs
-- ref_node_path
-- Architecture & Routing Strategy
-- jev.test.ts
-- inline-override.test.ts
+- 4.11.4 - 20-09-2026
+- 4.1.4
+- 4.1.5
+- 4.18.0 - 01-11-2026
 - 4.11.2 - 20-09-2026
 - 4.12.0 - 27-09-2026
 - 4.14.3 - 03-10-2026
 
 ## God Nodes (most connected - your core abstractions)
-1. `bifrostExtension()` - 103 edges
-2. `Changelog` - 86 edges
-3. `createCommandRouter()` - 42 edges
-4. `modelKey()` - 30 edges
+1. `bifrostExtension()` - 113 edges
+2. `Changelog` - 90 edges
+3. `createCommandRouter()` - 43 edges
+4. `modelKey()` - 32 edges
 5. `ReliabilityStore` - 24 edges
-6. `debug()` - 22 edges
-7. `handleDiscoveryReconcile()` - 21 edges
-8. `@earendil-works/pi-coding-agent` - 21 edges
+6. `debug()` - 23 edges
+7. `@earendil-works/pi-coding-agent` - 23 edges
+8. `handleDiscoveryReconcile()` - 21 edges
 9. `recordModelFailure()` - 21 edges
 10. `handleInit()` - 20 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `P3 — runtime config validation should match schema integer constraints` --references--> `validateConfig()`  [INFERRED]
+  docs/reliability-v1-review.md → config.ts
+- `P1 — config and recovery` --references--> `validateConfig()`  [INFERRED]
+  docs/ui-enhancements.md → config.ts
 - `Provider-wide degradation (P3)` --references--> `resolveHealthyModel()`  [INFERRED]
   docs/reliability-spec.md → routing.ts
 - `Strengths` --references--> `resolveHealthyModel()`  [INFERRED]
   docs/reliability-v1-review.md → routing.ts
 - `Fallback context-window guard (P3)` --references--> `resolveModelWithFallback()`  [INFERRED]
   docs/reliability-spec.md → routing.ts
-- `How it works (end to end)` --references--> `resolveModelWithFallback()`  [INFERRED]
-  docs/reliability-spec.md → routing.ts
-- `P1 — no post-selection provider-failure feedback loop` --references--> `RuntimeReliabilityTracker`  [INFERRED]
-  docs/reliability-v1-review.md → runtime-reliability.ts
 
 ## Import Cycles
 - None detected.
 
-## Communities (136 total, 40 thin omitted)
+## Communities (132 total, 42 thin omitted)
 
 ### Community 0 - "config.ts"
-Cohesion: 0.11
-Nodes (21): 4.11.3 - 20-09-2026, Changed, Fixed, ALL_STRATEGIES, BifrostConfig, BUILTIN_CATEGORY_DESCRIPTIONS, ClassifierConfig, ClassifierMethod (+13 more)
+Cohesion: 0.06
+Nodes (46): CacheOptions, 4.11.3 - 20-09-2026, 4.2.2, Added, Changed, Fixed, Fixed, ALL_STRATEGIES (+38 more)
 
 ### Community 1 - "classifier.ts"
-Cohesion: 0.13
-Nodes (26): boundedPrompt(), categoryLabel(), classificationPrompt(), classifierBaseUrl(), classifierId(), ClassifierOptions, classifyWithDirectHttp(), classifyWithJev() (+18 more)
+Cohesion: 0.06
+Nodes (58): boundedPrompt(), categoryLabel(), classificationPrompt(), classifierBaseUrl(), classifierId(), ClassifierOptions, classifyWithDirectHttp(), classifyWithJev() (+50 more)
 
 ### Community 2 - "reliability.ts"
-Cohesion: 0.06
-Nodes (52): validateConfig(), 2. Malformed-but-valid JSON crashes routing, Adding a new circuit state field, Adding a new failure source, Adding an E2E scenario, Architecture rules, Failure sources (what opens a circuit), Half-open circuit details (+44 more)
+Cohesion: 0.13
+Nodes (34): 2. Malformed-but-valid JSON crashes routing, Adding a new circuit state field, Adding a new failure source, Failure sources (what opens a circuit), Half-open circuit details, P1 — thrown `pi.setModel()` failures bypass circuit recording, P1 — valid-but-malformed persisted reliability JSON can crash routing, beginTrial() (+26 more)
 
 ### Community 3 - "Bifrost competitive architecture analysis"
 Cohesion: 0.04
@@ -203,47 +199,47 @@ Nodes (42): author, name, url, bugs, url, description, devDependencies, agent-tu
 
 ### Community 5 - "Bifrost UI enhancement backlog"
 Cohesion: 0.06
-Nodes (32): 1. Character-by-character input activates Pi autocomplete, 2. Screen stability is not a universal readiness condition, 3. Native terminal emulation does not isolate Pi, 4. agent-tui daemon state must be isolated, 5. Preserve visual coverage during migration, agent-tui PTY evaluation, Decision, Evidence (+24 more)
+Nodes (33): 1. Character-by-character input activates Pi autocomplete, 2. Screen stability is not a universal readiness condition, 3. Native terminal emulation does not isolate Pi, 4. agent-tui daemon state must be isolated, 5. Preserve visual coverage during migration, agent-tui PTY evaluation, Decision, Evidence (+25 more)
 
 ### Community 6 - "categoryStrategies"
 Cohesion: 0.13
 Nodes (15): categoryStrategies, architecture, code_review, debugging, free_pool, frontend, general, implementation (+7 more)
 
-### Community 7 - "routing.ts"
-Cohesion: 0.07
-Nodes (44): Fixed, fetchAnthropicQuota(), fetchAntigravityQuota(), fetchCodexQuota(), getAnthropicToken(), getAntigravityToken(), getAuth(), getCodexAccess() (+36 more)
+### Community 7 - "quota.ts"
+Cohesion: 0.11
+Nodes (20): Architecture map, autopilot, Bifrost today, model-fallback, model-router, fetchAnthropicQuota(), fetchAntigravityQuota(), fetchCodexQuota() (+12 more)
 
 ### Community 8 - "cache.ts"
-Cohesion: 0.08
-Nodes (36): CacheLookupIndex, CacheOptions, createDeferredCacheWriter(), DEFAULT_MAX_ENTRIES, DEFAULT_THRESHOLD, DeferredCacheWriter, lookupCache(), lookupIndex() (+28 more)
+Cohesion: 0.12
+Nodes (22): CacheLookupIndex, DEFAULT_MAX_ENTRIES, DEFAULT_THRESHOLD, DeferredCacheWriter, demoteCacheEntry(), evictIfNeeded(), lookupCache(), lookupIndex() (+14 more)
 
 ### Community 9 - "bifrost.json"
 Cohesion: 0.05
-Nodes (37): cache, enabled, maxEntries, threshold, categoryStrategies, coding, frontier, general (+29 more)
+Nodes (40): cache, enabled, maxEntries, threshold, categoryStrategies, coding, frontier, general (+32 more)
 
 ### Community 10 - "advanced-classifier-prompt.json"
 Cohesion: 0.06
 Nodes (33): cache, enabled, maxEntries, threshold, categoryStrategies, frontier, general, quick (+25 more)
 
 ### Community 11 - "Pi-Bifrost"
-Cohesion: 0.15
-Nodes (13): Attribution, Config, Disclaimer, Exhaustion handoff (Pi 1.1.0+), Install, License, Pi-Bifrost, Related (+5 more)
+Cohesion: 0.06
+Nodes (29): Credit-required rejection and scoped handoff, Deterministic verification, Evidence and cause, Host boundary, Implemented behavior, Attribution, 1. Initialization: Categorization & Ordering, 2. Runtime Model Selection Strategies (+21 more)
 
 ### Community 12 - "ui-smoke.py"
 Cohesion: 0.09
 Nodes (10): capture(), Cell, load_font(), main(), reader(), Screen, send(), set_winsize() (+2 more)
 
-### Community 13 - "index.ts"
-Cohesion: 0.18
-Nodes (15): evictIfNeeded(), updateCache(), warmStartCache(), jevClassifierForReference(), formatBifrostRouting(), rainbowWord(), generateTierDescriptions(), loadRules() (+7 more)
+### Community 13 - "resolveHealthyModel"
+Cohesion: 0.21
+Nodes (13): formatCandidateLines(), resolveTierDisplay(), isStrictCategory(), validateConfig(), Key files, resolveImageCapableFallback(), selectSpawnModel(), diagnoseCandidates() (+5 more)
 
 ### Community 14 - "models"
 Cohesion: 0.13
 Nodes (15): models, architecture, code_review, debugging, free_pool, frontend, general, implementation (+7 more)
 
 ### Community 15 - "thinking.ts"
-Cohesion: 0.15
-Nodes (18): decideThinking(), assessThinking(), capThinkingLevel(), clampToModel(), compareThinkingLevels(), countQuestionMarks(), fileReferenceCount(), JEV_EFFORT_HIGH (+10 more)
+Cohesion: 0.10
+Nodes (16): assessThinking(), countQuestionMarks(), fileReferenceCount(), JEV_EFFORT_HIGH, JEV_EFFORT_MEDIUM, JEV_EFFORT_MINIMAL, JEV_EFFORT_XHIGH, jevEffortPoints() (+8 more)
 
 ### Community 16 - "economical-frontier-reliability.json"
 Cohesion: 0.07
@@ -262,16 +258,16 @@ Cohesion: 0.12
 Nodes (16): compilerOptions, allowImportingTsExtensions, forceConsistentCasingInFileNames, module, moduleResolution, noEmit, noFallthroughCasesInSwitch, noUncheckedSideEffectImports (+8 more)
 
 ### Community 20 - "commands.ts"
-Cohesion: 0.07
-Nodes (73): CacheEntry, cachePath(), loadCache(), Fixed, ClassificationPipeline, isJevModelReference(), capFreeModels(), CollectionRanking (+65 more)
+Cohesion: 0.06
+Nodes (88): CacheEntry, cachePath(), loadCache(), Fixed, isChildSession(), ClassificationPipeline, capFreeModels(), CollectionRanking (+80 more)
 
 ### Community 21 - "economical-frontier.json"
 Cohesion: 0.09
 Nodes (22): cache, enabled, maxEntries, threshold, categoryStrategies, economical, frontier, classifier (+14 more)
 
-### Community 22 - "Architecture map"
-Cohesion: 0.33
-Nodes (5): Architecture map, autopilot, Bifrost today, model-fallback, model-router
+### Community 22 - "ReliabilityStore"
+Cohesion: 0.20
+Nodes (5): ReliabilityConfig, ReliabilityState, ReliabilityIo, ReliabilityStore, ReliabilityStoreOptions
 
 ### Community 23 - "Changelog"
 Cohesion: 0.07
@@ -285,9 +281,9 @@ Nodes (13): AGENT_TUI_SESSION_STORE, AGENT_TUI_SOCKET, AGENT_TUI_UI_STATE, AGENT
 Cohesion: 0.24
 Nodes (11): AGENT_TUI_SESSION_STORE, AGENT_TUI_SOCKET, AGENT_TUI_UI_STATE, AGENT_TUI_WS_DISABLED, AGENT_TUI_WS_STATE, resolve_binary(), send_command(), ui-smoke-agent-tui.sh script (+3 more)
 
-### Community 26 - "ux-status.ts"
+### Community 26 - "routing.test.ts"
 Cohesion: 0.25
-Nodes (11): BifrostModeState, formatBifrostStatus(), modeLabel(), refreshRegistry(), REGISTRY_REFRESH_TTL_MS, RegistryRefreshState, setBifrostModeStatus(), setBifrostStatus() (+3 more)
+Nodes (12): DEFAULT_RULES, @earendil-works/pi-ai, @earendil-works/pi-coding-agent, classify(), findCandidates(), findOneModel(), resolveModel(), makeClassifierModel() (+4 more)
 
 ### Community 27 - "Product"
 Cohesion: 0.08
@@ -297,9 +293,9 @@ Nodes (23): Architecture, Change discipline, Git, Non-negotiable behavior, Pi-Bi
 Cohesion: 0.17
 Nodes (9): 4.3.1, Added, 3. `agent_end` fires per retry, not per request, AssistantOutcome, modelKey(), RuntimeFailure, RuntimeReliabilityTracker, RuntimeRetryContext (+1 more)
 
-### Community 29 - "discovery.ts"
-Cohesion: 0.16
-Nodes (15): DiscoverySource, buildDiscoveryMetadata(), discoverModels(), DiscoveryOptions, DiscoveryResult, isFreeModel(), isHuggingFaceModel(), isOpenRouterModel() (+7 more)
+### Community 29 - "modelKey"
+Cohesion: 0.29
+Nodes (12): selectHandoffModel(), inferPattern(), configuredCategory(), extractParamCount(), guessTier(), modelKey(), scopedCandidates(), AgentRoutingDefaults (+4 more)
 
 ### Community 30 - "large-context.json"
 Cohesion: 0.11
@@ -309,29 +305,29 @@ Nodes (18): categoryStrategies, deep, long-context, quick, classifier, enabled, 
 Cohesion: 0.12
 Nodes (16): `advanced-classifier-prompt.json`, `economical-frontier.json`, `economical-frontier-reliability.json`, `exact-bindings.json`, Install Bifrost first:, `large-context.json`, Manual control, Pi-Bifrost examples (+8 more)
 
-### Community 32 - "bifrostExtension"
-Cohesion: 0.18
-Nodes (23): BranchMessage, completedTools(), createHandoff(), isCreditsRequired(), selectHandoffModel(), text(), bifrostExtension(), branch() (+15 more)
+### Community 32 - "routing.ts"
+Cohesion: 0.14
+Nodes (24): Fixed, QuotaSnapshot, filterQuotaExhausted(), filterSessionExhausted(), getModelQuota(), hasUsableQuota(), isProviderQuotaExhausted(), isProviderSessionExhausted() (+16 more)
 
 ### Community 33 - "classification-pipeline.ts"
-Cohesion: 0.18
-Nodes (12): autoPinSource(), ClassificationResult, ClassifyOptions, CODING_TIER, FRONTIER_DIRECTIVE, FRONTIER_EFFORT, FRONTIER_TIER, frontierSystemPrompt() (+4 more)
+Cohesion: 0.06
+Nodes (41): 4.1.2, 4.2.1, Changed, Fixed, Fixed, ClassificationResult, ClassificationSource, ClassifyOptions (+33 more)
 
 ### Community 34 - "release.mjs"
 Cohesion: 0.33
 Nodes (8): args, bumpVersion(), getLatestTag(), main(), parseVersion(), ROOT, run(), SCRIPT_DIR
 
-### Community 35 - "ref_node_test"
-Cohesion: 0.31
-Nodes (9): @earendil-works/pi-ai, findCandidates(), findOneModel(), resolveModelWithFallback(), makeClassifierModel(), makeCtx(), makeModel(), makeRegistry() (+1 more)
+### Community 35 - "decideThinking"
+Cohesion: 0.32
+Nodes (7): decideThinking(), spawnThinking(), state, billingClass, modelCost(), capThinkingLevel(), compareThinkingLevels()
 
 ### Community 36 - "rules-only-local.json"
 Cohesion: 0.17
 Nodes (11): classifier, enabled, model, default, enabled, models, economical, frontier (+3 more)
 
 ### Community 37 - "Pi-Bifrost Reliability System"
-Cohesion: 0.25
-Nodes (6): Circuit states, Configuration reference, File map, Overview, Pi-Bifrost Reliability System, Table of Contents
+Cohesion: 0.18
+Nodes (9): Circuit states, Configuration reference, File map, How it works (end to end), Implemented: health-aware selection & circuit breaker, Overview, Persistence, Pi-Bifrost Reliability System (+1 more)
 
 ### Community 38 - "exact-bindings.json"
 Cohesion: 0.22
@@ -341,20 +337,16 @@ Nodes (8): default, enabled, models, economical, frontier, rules, $schema, strat
 Cohesion: 0.20
 Nodes (10): 1. `pi-model-router`: closest direct routing peer, Architecture: virtual provider pattern, Bifrost lessons from deep source review, Comparison with Bifrost, Decision history, Key strengths for Bifrost to learn, Key weaknesses to avoid, Reliability model: absent (+2 more)
 
-### Community 40 - "category-commands.test.mjs"
-Cohesion: 0.12
-Nodes (11): jiti, agentDir, jiti, loadJiti(), projectDir, piPackageDir, projectDir, root (+3 more)
-
-### Community 41 - "fake-provider-server.mjs"
-Cohesion: 0.32
-Nodes (6): attempts, json(), port, server, sse(), stats
+### Community 40 - "subagent-routing-host.test.mjs"
+Cohesion: 0.09
+Nodes (12): jiti, agentDir, jiti, loadJiti(), projectDir, piPackageDir, projectDir, jiti (+4 more)
 
 ### Community 42 - "ref_node_assert"
-Cohesion: 0.18
-Nodes (4): ./index.ts, __dirname, EXTENSION_PATH, PI_ARGS
+Cohesion: 0.11
+Nodes (13): isExecutable(), resolveTestBinary(), scriptPath, trimEnvValue(), unique(), root, ./index.ts, __dirname (+5 more)
 
 ### Community 43 - "exhaustion-handoff.test.mjs"
-Cohesion: 0.38
+Cohesion: 0.32
 Nodes (5): jiti, key(), model(), root, scenario()
 
 ### Community 44 - "task-aware-routing.json"
@@ -365,9 +357,9 @@ Nodes (8): _comment, debug, enabled, default, enabled, rules, $schema, strategy
 Cohesion: 0.25
 Nodes (5): Bifrost strengths to protect, Competitive positioning, OpenCode router landscape, Scope and sources, Suggested next research
 
-### Community 46 - "SessionRoutingContext"
-Cohesion: 0.23
-Nodes (6): demoteCacheEntry(), normalize(), CONTINUATION_WORDS, HistoryEntry, SessionContextConfig, SessionRoutingContext
+### Community 46 - "Findings"
+Cohesion: 0.50
+Nodes (4): Findings, P1 — no post-selection provider-failure feedback loop, P2 — disabled reliability still reports old circuits and writes probe successes, P3 — runtime config validation should match schema integer constraints
 
 ### Community 47 - "Reliability v1 implementation review"
 Cohesion: 0.25
@@ -377,13 +369,13 @@ Nodes (7): Follow-up test matrix, Merge recommendation, Reliability v1 implement
 Cohesion: 0.25
 Nodes (8): classifier, enabled, fallbackToRegex, maxTokens, method, model, systemPrompt, temperature
 
-### Community 49 - "Mistakes, gotchas & learnings"
-Cohesion: 0.29
-Nodes (7): 1. Pi's `pi.setModel()` throws, not returns false, 4. `PI_CODING_AGENT_DIR`, not `PI_AGENT_DIR` or `HOME`, 5. Fake server: HTTP 500 triggers retry, broken streams do not, 6. SSE `finish_reason: null` causes Pi to continue generating, 7. Half-open design evolved through three iterations, 8. Disabled reliability reported stale circuits, Mistakes, gotchas & learnings
+### Community 49 - "index.ts"
+Cohesion: 0.11
+Nodes (32): createDeferredCacheWriter(), touchCacheEntry(), CHILD_ROUTE_ENTRY, children, noteChildSession(), autoPinSource(), frontierSystemPrompt(), isJevModelReference() (+24 more)
 
-### Community 50 - "Design decisions & rationale"
-Cohesion: 0.29
-Nodes (7): Design decisions & rationale, Why cooldown multiplier per-circuit, not global, Why disabled reliability still has behavioral knobs, Why JSON file, not SQLite or in-memory, Why model-keyed state, not provider-keyed, Why not retry same prompt on different model, Why trial flag is explicit, not inferred
+### Community 50 - "result-viewer.ts"
+Cohesion: 0.26
+Nodes (5): isEscapeKey(), ResultTheme, ResultViewer, showBifrostResult(), wrapResultLines()
 
 ### Community 51 - "Pi extension router landscape"
 Cohesion: 0.29
@@ -393,13 +385,9 @@ Nodes (7): Cross-Pi comparison, Executive read, Next research questions, Pi exte
 Cohesion: 0.33
 Nodes (5): BIFROST_RPC_VERSION, ClassifyTaskResult, handleRpcRequest(), RpcReply, RpcRequest
 
-### Community 53 - "Not yet implemented"
-Cohesion: 0.33
-Nodes (6): All-candidates-open policy improvements (P3), Degraded-recovery scoring (P3), Fallback context-window guard (P3), Multi-process state safety (P4), Not yet implemented, Provider-wide degradation (P3)
-
-### Community 54 - "Implemented: post-settlement failure tracking"
-Cohesion: 0.40
-Nodes (4): Implemented: post-settlement failure tracking, Known limitation: recovered retry not tracked, RuntimeReliabilityTracker, Why post-settlement and not agent_end
+### Community 53 - "How to add a feature"
+Cohesion: 0.67
+Nodes (3): Adding an E2E scenario, Architecture rules, How to add a feature
 
 ### Community 55 - "remote-prompt.test.ts"
 Cohesion: 0.60
@@ -433,9 +421,9 @@ Nodes (5): reliability, cooldownMinutes, enabled, failureThreshold, windowMinute
 Cohesion: 0.50
 Nodes (4): 4.1.0, Added, Changed, Notes
 
-### Community 63 - "4.1.2"
-Cohesion: 0.50
-Nodes (4): 4.1.2, Changed, Fixed, ClassificationSource
+### Community 63 - "Mistakes, gotchas & learnings"
+Cohesion: 0.29
+Nodes (7): 1. Pi's `pi.setModel()` throws, not returns false, 4. `PI_CODING_AGENT_DIR`, not `PI_AGENT_DIR` or `HOME`, 5. Fake server: HTTP 500 triggers retry, broken streams do not, 6. SSE `finish_reason: null` causes Pi to continue generating, 7. Half-open design evolved through three iterations, 8. Disabled reliability reported stale circuits, Mistakes, gotchas & learnings
 
 ### Community 64 - "4.2.0"
 Cohesion: 0.50
@@ -453,13 +441,9 @@ Nodes (4): 4.5.10 - 29-08-2026, Added, Changed, Fixed
 Cohesion: 0.50
 Nodes (4): 4.5.21 - 05-09-2026, Changed, Fixed, Removed
 
-### Community 68 - "Test infrastructure"
-Cohesion: 0.50
-Nodes (4): Fake provider E2E: deterministic HTTP/SSE server, Test infrastructure, Unit tests: 146 tests, 48 suites, Visual smoke: unchanged
-
-### Community 69 - "diagnostics.ts"
-Cohesion: 0.33
-Nodes (11): BifrostDiagnostic, classifierAuthMissing(), classifierModelMissing(), classifierSubprocessFailed(), DiagnosticSeverity, parseClassifierStderr(), parseSetModelError(), patternUnresolvable() (+3 more)
+### Community 69 - "Design decisions & rationale"
+Cohesion: 0.29
+Nodes (7): Design decisions & rationale, Why cooldown multiplier per-circuit, not global, Why disabled reliability still has behavioral knobs, Why JSON file, not SQLite or in-memory, Why model-keyed state, not provider-keyed, Why not retry same prompt on different model, Why trial flag is explicit, not inferred
 
 ### Community 70 - "What each does well"
 Cohesion: 0.50
@@ -521,69 +505,57 @@ Nodes (3): 4.5.16 - 01-09-2026, Added, Changed
 Cohesion: 0.67
 Nodes (3): 4.5.6 - 29-08-2026, Added, Changed
 
-### Community 85 - "guessTier"
-Cohesion: 0.15
-Nodes (13): 4.11.0 - 19-09-2026, 4.2.2, 4.6.0 - 12-09-2026, Added, Added, Added, Changed, Fixed (+5 more)
+### Community 85 - "4.6.0 - 12-09-2026"
+Cohesion: 0.67
+Nodes (3): 4.6.0 - 12-09-2026, Added, Changed
 
 ### Community 86 - "4.7.0 - 13-09-2026"
 Cohesion: 0.67
 Nodes (3): 4.7.0 - 13-09-2026, Added, Fixed
 
-### Community 87 - "debug"
-Cohesion: 0.24
-Nodes (10): createPipeline(), classify(), classifyWithLLM(), analyzeComplexity(), assessComplexity(), ComplexitySignals, ComplexityVerdict, debug() (+2 more)
+### Community 88 - "storage.ts"
+Cohesion: 0.19
+Nodes (16): applyRuntimeState(), loadSessionRuntimeState(), DEFAULT_RUNTIME_STATE, loadRuntimeState(), PersistedModeState, RuntimeModeState, runtimeStatePath(), saveRuntimeState() (+8 more)
 
-### Community 88 - "@earendil-works/pi-coding-agent"
-Cohesion: 0.20
-Nodes (8): DEFAULT_RULES, assistantText(), PROBE_PROMPT_TEXT, PROBE_RESULT_TTL_MS, probeOne(), ProbeOptions, ProbeResult, @earendil-works/pi-coding-agent
-
-### Community 117 - "result-viewer.ts"
-Cohesion: 0.27
-Nodes (4): isEscapeKey(), ResultTheme, ResultViewer, wrapResultLines()
-
-### Community 123 - "Credit-required rejection and scoped handoff"
-Cohesion: 0.20
-Nodes (6): Credit-required rejection and scoped handoff, Deterministic verification, Evidence and cause, Host boundary, Implemented behavior, Attribution
-
-### Community 127 - "debug.ts"
-Cohesion: 0.27
-Nodes (8): buffer, DebugConfig, flushBuffer(), flushSync(), rotateIfNeeded(), runCorrelation, scheduleFlush(), setupDebug()
-
-### Community 128 - "ref_node_fs"
+### Community 92 - "Not yet implemented"
 Cohesion: 0.33
-Nodes (5): cleanupSessionState(), scheduleSessionCleanup(), SessionCleanupOptions, SessionCleanupResult, sessionRoot()
+Nodes (6): All-candidates-open policy improvements (P3), Degraded-recovery scoring (P3), Fallback context-window guard (P3), Multi-process state safety (P4), Not yet implemented, Provider-wide degradation (P3)
 
-### Community 129 - "ref_node_path"
-Cohesion: 0.36
-Nodes (5): isExecutable(), resolveTestBinary(), scriptPath, trimEnvValue(), unique()
-
-### Community 130 - "Architecture & Routing Strategy"
-Cohesion: 0.33
-Nodes (6): 1. Initialization: Categorization & Ordering, 2. Runtime Model Selection Strategies, 3. Dynamic Pipeline: Prompt Routing, 4. Model Autopinning, 5. Thinking Mode Steering, Architecture & Routing Strategy
-
-### Community 132 - "inline-override.test.ts"
+### Community 96 - "inline-override.test.ts"
 Cohesion: 0.50
 Nodes (3): InlineOverrideResult, parseInlineOverride(), models
 
+### Community 98 - "Implemented: post-settlement failure tracking"
+Cohesion: 0.40
+Nodes (4): Implemented: post-settlement failure tracking, Known limitation: recovered retry not tracked, RuntimeReliabilityTracker, Why post-settlement and not agent_end
+
+### Community 99 - "4.17.0 - 18-10-2026"
+Cohesion: 0.67
+Nodes (3): 4.17.0 - 18-10-2026, Added, Fixed
+
+### Community 102 - "Test infrastructure"
+Cohesion: 0.50
+Nodes (4): Fake provider E2E: deterministic HTTP/SSE server, Test infrastructure, Unit tests: 146 tests, 48 suites, Visual smoke: unchanged
+
 ## Knowledge Gaps
-- **15 isolated node(s):** `ADR-0015`, `@types/node`, `agent-tui`, `typescript`, `AGENT_TUI_SOCKET` (+10 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 702 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **40 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **14 isolated node(s):** `@types/node`, `agent-tui`, `typescript`, `AGENT_TUI_SOCKET`, `AGENT_TUI_SESSION_STORE` (+9 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 732 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **42 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `QuotaStore` connect `routing.ts` to `bifrostExtension`, `index.ts`, `Architecture map`?**
-  _High betweenness centrality (0.127) - this node is a cross-community bridge._
+- **Why does `QuotaStore` connect `quota.ts` to `routing.ts`, `index.ts`?**
+  _High betweenness centrality (0.126) - this node is a cross-community bridge._
 - **Are the 18 inferred relationships involving `bifrostExtension()` (e.g. with `isJevModelReference()` and `getBifrostCommandCompletions()`) actually correct?**
   _`bifrostExtension()` has 18 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `ADR-0015`, `@types/node`, `agent-tui` to the rest of the system?**
-  _15 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **What connects `@types/node`, `agent-tui`, `typescript` to the rest of the system?**
+  _14 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `config.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.11462450592885376 - nodes in this community are weakly interconnected._
-- **Why does `Architecture map` connect `Architecture map` to `OpenCode router landscape`?**
-  _High betweenness centrality (0.117) - this node is a cross-community bridge._
+  _Cohesion score 0.058069381598793365 - nodes in this community are weakly interconnected._
+- **Why does `Changelog` connect `Changelog` to `config.ts`, `4.1.4`, `4.1.5`, `4.18.0 - 01-11-2026`, `4.11.2 - 20-09-2026`, `4.12.0 - 27-09-2026`, `4.14.3 - 03-10-2026`, `cache.ts`, `Pi-Bifrost`, `RuntimeReliabilityTracker`, `classification-pipeline.ts`, `4.14.1 - 01-10-2026`, `4.1.0`, `4.2.0`, `4.4.0`, `4.5.10 - 29-08-2026`, `4.5.21 - 05-09-2026`, `4.16.0 - 15-10-2026`, `4.10.1 - 19-09-2026`, `4.14.0 - 30-09-2026`, `4.15.2 - 05-10-2026`, `4.15.4 - 09-10-2026`, `4.15.5 - 15-10-2026`, `4.3.0`, `4.4.3`, `4.5.14 - 01-09-2026`, `4.5.15 - 01-09-2026`, `4.5.16 - 01-09-2026`, `4.5.6 - 29-08-2026`, `4.6.0 - 12-09-2026`, `4.7.0 - 13-09-2026`, `4.5.12 - 30-08-2026`, `4.11.0 - 19-09-2026`, `4.11.5 - 26-09-2026`, `4.13.0 - 27-09-2026`, `4.14.2 - 03-10-2026`, `4.14.4 - 04-10-2026`, `4.14.5 - 04-10-2026`, `4.15.1 - 04-10-2026`, `4.17.0 - 18-10-2026`, `4.1.1`, `4.5.7 - 29-08-2026`, `4.5.3 - 28-08-2026`, `4.1.6`, `4.1.7`, `4.1.8`, `4.1.9`, `Unreleased`, `4.2.3`, `4.3.2`, `4.5.11 - 30-08-2026`, `4.15.3 - 07-10-2026`, `4.5.13 - 31-08-2026`, `4.5.17 - 01-09-2026`, `4.5.18 - 04-09-2026`, `4.5.22 - 05-09-2026`, `4.5.4 - 28-08-2026`, `4.5.5 - 29-08-2026`, `4.17.1 - 01-11-2026`, `4.5.8 - 29-08-2026`, `4.1.3`, `4.9.0 - 15-09-2026`, `4.9.1 - 16-09-2026`, `4.11.4 - 20-09-2026`?**
+  _High betweenness centrality (0.123) - this node is a cross-community bridge._
 - **Should `classifier.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.1310344827586207 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.05541346973572037 - nodes in this community are weakly interconnected._
 - **Should `reliability.ts` be split into smaller, more focused modules?**
-  _Cohesion score 0.06468797564687975 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.1346153846153846 - nodes in this community are weakly interconnected._

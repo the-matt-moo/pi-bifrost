@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const launcherPath = fileURLToPath(new URL("./credential-launcher.exe", import.meta.url));
 
 const CREDENTIAL_SCRIPT = String.raw`
 $source = @'
@@ -64,7 +67,7 @@ export async function readWindowsCredential(target: string): Promise<string | un
 
   const encoded = await new Promise<string | undefined>((resolve, reject) => {
     execFile(
-      "powershell.exe",
+      launcherPath,
       ["-NoProfile", "-WindowStyle", "Hidden", "-NonInteractive", "-EncodedCommand", encodedScript],
       {
         env: {

@@ -1,6 +1,8 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { isChildSession } from "./child-session.ts";
+export { isChildSession } from "./child-session.ts";
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadRuntimeState, runtimeStatePath } from "./runtime-state.ts";
@@ -130,23 +132,6 @@ export function syncSubagentModelSettings(settings: JsonRecord): boolean {
 
   settings.subagents = subagents;
   return JSON.stringify(subagents) !== before;
-}
-
-export function isChildSession(ctx: ExtensionContext): boolean {
-  if (process.env.PI_SUBAGENT_RUN_ID) return true;
-  try {
-    const sessionFile = ctx.sessionManager?.getSessionFile?.();
-    if (sessionFile && /[\\/]tasks[\\/]/.test(sessionFile)) {
-      return true;
-    }
-    const header = ctx.sessionManager?.getHeader?.();
-    if (!ctx.hasUI && header && typeof header === "object" && "parentSession" in header && Boolean((header as { parentSession?: unknown }).parentSession)) {
-      return true;
-    }
-  } catch {
-    // ignore
-  }
-  return false;
 }
 
 export function setBifrostSilent(ctx: ExtensionContext, silent: boolean): void {

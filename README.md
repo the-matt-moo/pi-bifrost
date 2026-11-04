@@ -53,7 +53,7 @@ See [NOTICE.md](NOTICE.md) and [CHANGELOG.md](CHANGELOG.md) for full attribution
 
 ### Subagent Integration
 
-Bifrost exposes an in-process `bifrost:rpc:v1` classification channel for subagent bridges. The `classifyTask` method returns the selected model and thinking level without changing the active Pi session model. This supports Claude Code-style subagent extensions such as `@tintinweb/pi-subagents` and `@gotgenes/pi-subagents`. Child subagent sessions are automatically detected and silenced so background/headless routing logs do not emit raw `stderr` into the terminal or corrupt the parent's fullscreen prompt window.
+Bifrost resolves subagent `model` and `thinking` once in the parent before spawn (via `@gotgenes/pi-subagents` `registerSpawnHook`, with `tool_call` and `bifrost:rpc:v1` `classifyTask` fallbacks) without changing the parent session's active model. Precedence is: explicit caller parameter, agent frontmatter default (honoring `locked:`), Bifrost task classification, and Pi's global default thinking level. Child subagent sessions are detected via lifecycle events and persisted `bifrost-child-route` markers, silenced, and excluded from mid-session re-routing or handoffs.
 
 Bifrost also listens for `remote-pi:user-prompt` events on the shared event bus so prompts sent from the Remote Pi mobile app are classified and routed like locally-typed input.
 
